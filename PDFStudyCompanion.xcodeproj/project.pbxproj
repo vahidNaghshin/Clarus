@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		C7870E08302EA0D800FDE4B5 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = C7870E07302EA0D800FDE4B5 /* GRDB */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		C7870DD5302E9AA800FDE4B5 /* PDFStudyCompanion.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = PDFStudyCompanion.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -23,6 +27,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C7870E08302EA0D800FDE4B5 /* GRDB in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -65,6 +70,7 @@
 			);
 			name = PDFStudyCompanion;
 			packageProductDependencies = (
+				C7870E07302EA0D800FDE4B5 /* GRDB */,
 			);
 			productName = PDFStudyCompanion;
 			productReference = C7870DD5302E9AA800FDE4B5 /* PDFStudyCompanion.app */;
@@ -94,6 +100,9 @@
 			);
 			mainGroup = C7870DCC302E9AA800FDE4B5;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				C7870E06302EA0D800FDE4B5 /* XCRemoteSwiftPackageReference "GRDB" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = C7870DD6302E9AA800FDE4B5 /* Products */;
 			projectDirPath = "";
@@ -251,7 +260,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
-				ENABLE_APP_SANDBOX = YES;
+				ENABLE_APP_SANDBOX = NO;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -281,7 +290,7 @@
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
-				ENABLE_APP_SANDBOX = YES;
+				ENABLE_APP_SANDBOX = NO;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -325,6 +334,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		C7870E06302EA0D800FDE4B5 /* XCRemoteSwiftPackageReference "GRDB" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/groue/GRDB.swift";
+			requirement = {
+				kind = exactVersion;
+				version = 7.11.1;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		C7870E07302EA0D800FDE4B5 /* GRDB */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = C7870E06302EA0D800FDE4B5 /* XCRemoteSwiftPackageReference "GRDB" */;
+			productName = GRDB;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = C7870DCD302E9AA800FDE4B5 /* Project object */;
 }

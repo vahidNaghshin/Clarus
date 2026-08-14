@@ -1,0 +1,27 @@
+.DS_Store
+
+# Xcode user data
+xcuserdata/
+*.xcuserstate
+
+# Build products
+build/
+DerivedData/
+
+# Swift Package Manager
+.build/
+
+# App and archive artifacts
+*.ipa
+*.dSYM
+*.dSYM.zip
+*.xcarchive
+
+# Local environment files
+.env
+.env.*
+
+# Editor temp files
+*.swp
+*.swo
+*~
