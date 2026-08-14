@@ -46,10 +46,32 @@ struct PDFIngestionService {
     private func chapter(from node: PDFOutline, pdf: PDFKit.PDFDocument) -> Chapter? {
         let title = node.label ?? "Untitled chapter"
         let range = startPageRange(of: node, pdf: pdf)
-        let sections = (0..<node.numberOfChildren).compactMap { i -> Section? in
-            guard let child = node.child(at: i) else { return nil }
-            return section(from: child, pdf: pdf)
+        let sections: [Section]
+
+        // Some PDFs (notably technical papers) place sections directly at
+        // the top level with no subsection children. Treat those leaf nodes
+        // as actual sections so the sidebar and Study panel still work.
+        if node.numberOfChildren == 0 {
+            guard let singleSection = section(from: node, pdf: pdf) else { return nil }
+            sections = [singleSection]
+        } else {
+            var collected: [Section] = []
+
+            // Keep the parent node as its own section entry so text that
+            // appears between a section heading and its first subsection
+            // is not dropped during ingestion.
+            if let parentSection = section(from: node, pdf: pdf) {
+                collected.append(parentSection)
+            }
+
+            collected.append(contentsOf: (0..<node.numberOfChildren).compactMap { i -> Section? in
+                guard let child = node.child(at: i) else { return nil }
+                return section(from: child, pdf: pdf)
+            })
+
+            sections = collected
         }
+
         return Chapter(id: UUID(), title: title, sections: sections, pageRange: range)
     }
 
