@@ -20,10 +20,17 @@ struct Chapter: Identifiable, Codable {
     var pageRange: ClosedRange<Int>
 }
 
+struct SectionAnchor: Codable, Hashable {
+    var pageIndex: Int
+    var x: Double
+    var y: Double
+}
+
 /// A section is the unit the digest engine summarizes and quizzes on.
 struct Section: Identifiable, Codable {
     let id: UUID
     var title: String
     var pageRange: ClosedRange<Int>
+    var startAnchor: SectionAnchor?
     var rawText: String
 }

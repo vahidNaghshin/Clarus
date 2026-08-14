@@ -37,14 +37,15 @@ struct PDFIngestionService {
             return chapter(from: node, pdf: pdf)
         }
 
-        return chapters.isEmpty ? fallbackChapters(for: pdf) : chapters
+        let normalized = normalizeChapterRanges(chapters, pdf: pdf)
+        return normalized.isEmpty ? fallbackChapters(for: pdf) : normalized
     }
 
     // MARK: - Outline walking
 
     private func chapter(from node: PDFOutline, pdf: PDFKit.PDFDocument) -> Chapter? {
         let title = node.label ?? "Untitled chapter"
-        let range = pageRange(of: node, pdf: pdf)
+        let range = startPageRange(of: node, pdf: pdf)
         let sections = (0..<node.numberOfChildren).compactMap { i -> Section? in
             guard let child = node.child(at: i) else { return nil }
             return section(from: child, pdf: pdf)
@@ -54,9 +55,10 @@ struct PDFIngestionService {
 
     private func section(from node: PDFOutline, pdf: PDFKit.PDFDocument) -> Section? {
         let title = node.label ?? "Untitled section"
-        let range = pageRange(of: node, pdf: pdf)
+        let range = startPageRange(of: node, pdf: pdf)
+        let anchor = anchor(for: node, pdf: pdf)
         let text = extractText(pages: range, pdf: pdf)
-        return Section(id: UUID(), title: title, pageRange: range, rawText: text)
+        return Section(id: UUID(), title: title, pageRange: range, startAnchor: anchor, rawText: text)
     }
 
     private func fallbackChapters(for pdf: PDFKit.PDFDocument) -> [Chapter] {
@@ -67,6 +69,7 @@ struct PDFIngestionService {
                 id: UUID(),
                 title: "Page \(pageIndex + 1)",
                 pageRange: pageIndex...pageIndex,
+                startAnchor: topAnchor(forPageAt: pageIndex, pdf: pdf),
                 rawText: extractText(pages: pageIndex...pageIndex, pdf: pdf))
         }
 
@@ -79,15 +82,69 @@ struct PDFIngestionService {
         ]
     }
 
-    /// Simplified: uses just the node's own start page. A fuller
-    /// implementation looks ahead to the next sibling's start page (or
-    /// the parent's end) to compute where this section actually ends.
-    private func pageRange(of node: PDFOutline, pdf: PDFKit.PDFDocument) -> ClosedRange<Int> {
+    private func startPageRange(of node: PDFOutline, pdf: PDFKit.PDFDocument) -> ClosedRange<Int> {
         guard let dest = node.destination, let page = dest.page else {
             return 0...0
         }
         let start = pdf.index(for: page)
         return start...start
+    }
+
+    private func anchor(for node: PDFOutline, pdf: PDFKit.PDFDocument) -> SectionAnchor? {
+        guard let dest = node.destination, let page = dest.page else {
+            return nil
+        }
+
+        let pageIndex = pdf.index(for: page)
+        let point = dest.point
+        return SectionAnchor(pageIndex: pageIndex, x: point.x, y: point.y)
+    }
+
+    private func topAnchor(forPageAt pageIndex: Int, pdf: PDFKit.PDFDocument) -> SectionAnchor? {
+        guard let page = pdf.page(at: pageIndex) else { return nil }
+        let bounds = page.bounds(for: .mediaBox)
+        return SectionAnchor(pageIndex: pageIndex, x: bounds.minX, y: bounds.maxY)
+    }
+
+    private func normalizeChapterRanges(_ chapters: [Chapter], pdf: PDFKit.PDFDocument) -> [Chapter] {
+        let pageCount = pdf.pageCount
+        guard pageCount > 0 else { return chapters }
+
+        return chapters.enumerated().map { index, chapter in
+            var normalizedChapter = chapter
+            normalizedChapter.sections = normalizeSectionRanges(chapter.sections, pdf: pdf)
+
+            let chapterStart = normalizedChapter.sections.first?.pageRange.lowerBound ?? chapter.pageRange.lowerBound
+            let chapterEnd: Int
+            if index + 1 < chapters.count {
+                chapterEnd = max(chapterStart, chapters[index + 1].pageRange.lowerBound - 1)
+            } else {
+                chapterEnd = pageCount - 1
+            }
+
+            normalizedChapter.pageRange = chapterStart...chapterEnd
+            return normalizedChapter
+        }
+    }
+
+    private func normalizeSectionRanges(_ sections: [Section], pdf: PDFKit.PDFDocument) -> [Section] {
+        let pageCount = pdf.pageCount
+        guard pageCount > 0 else { return sections }
+
+        return sections.enumerated().map { index, section in
+            var normalizedSection = section
+            let start = section.pageRange.lowerBound
+            let end: Int
+            if index + 1 < sections.count {
+                end = max(start, sections[index + 1].pageRange.lowerBound - 1)
+            } else {
+                end = pageCount - 1
+            }
+
+            normalizedSection.pageRange = start...end
+            normalizedSection.rawText = extractText(pages: normalizedSection.pageRange, pdf: pdf)
+            return normalizedSection
+        }
     }
 
     private func extractText(pages: ClosedRange<Int>, pdf: PDFKit.PDFDocument) -> String {

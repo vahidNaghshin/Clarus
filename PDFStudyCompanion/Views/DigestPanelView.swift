@@ -19,7 +19,7 @@ struct DigestPanelView: View {
                     Text(section.title).font(.title3.bold())
 
                     HStack {
-                        Button(isSummarizing ? "Summarizing…" : "Summarize This Page") {
+                        Button(isSummarizing ? "Summarizing…" : "Summarize This Section") {
                             summarize(section)
                         }
                         .disabled(isBusy || !hasReadableText(section))

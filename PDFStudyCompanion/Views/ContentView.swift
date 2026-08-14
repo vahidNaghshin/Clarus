@@ -53,7 +53,7 @@ struct ContentView: View {
                         selectedText = event.selectedText
 
                         guard let pageIndex = event.pageIndex else { return }
-                        if let matchedSection = section(for: pageIndex, in: document) {
+                        if let matchedSection = section(for: pageIndex, pagePoint: event.pagePoint, in: document) {
                             selectedSection = matchedSection
 
                             if event.isCommandHeld, event.selectedText != nil {
@@ -64,14 +64,14 @@ struct ContentView: View {
                             }
                         }
                     } onHighlightCreated: { selectedText, pageIndex, segments in
-                        let matchedSection = pageIndex.flatMap { section(for: $0, in: document) }
+                        let matchedSection = pageIndex.flatMap { section(for: $0, pagePoint: nil, in: document) }
                         _ = historyStore.addHighlight(
                             document: document,
                             section: matchedSection,
                             selectedText: selectedText,
                             segments: segments)
                     } onHighlightNoteRequest: { request in
-                        let matchedSection = request.pageIndex.flatMap { section(for: $0, in: document) }
+                        let matchedSection = request.pageIndex.flatMap { section(for: $0, pagePoint: nil, in: document) }
                         if let matchedSection {
                             selectedSection = matchedSection
                         }
@@ -202,10 +202,40 @@ struct ContentView: View {
         }
     }
 
-    private func section(for pageIndex: Int, in document: PDFDocument) -> Section? {
-        document.chapters
+    private func section(for pageIndex: Int, pagePoint: CGPoint?, in document: PDFDocument) -> Section? {
+        let sections = document.chapters
             .flatMap(\.sections)
-            .first { $0.pageRange.contains(pageIndex) }
+            .sorted {
+                let lhsPage = $0.startAnchor?.pageIndex ?? $0.pageRange.lowerBound
+                let rhsPage = $1.startAnchor?.pageIndex ?? $1.pageRange.lowerBound
+
+                if lhsPage == rhsPage {
+                    let lhsY = $0.startAnchor?.y ?? Double.greatestFiniteMagnitude
+                    let rhsY = $1.startAnchor?.y ?? Double.greatestFiniteMagnitude
+                    if lhsY == rhsY {
+                        return $0.pageRange.upperBound < $1.pageRange.upperBound
+                    }
+                    return lhsY > rhsY
+                }
+                return lhsPage < rhsPage
+            }
+
+        if let pagePoint,
+           let anchoredMatch = sections.last(where: { section in
+               let startPage = section.startAnchor?.pageIndex ?? section.pageRange.lowerBound
+               if startPage < pageIndex { return true }
+               if startPage > pageIndex { return false }
+               let startY = section.startAnchor?.y ?? Double.greatestFiniteMagnitude
+               return startY >= pagePoint.y
+           }) {
+            return anchoredMatch
+        }
+
+        if let exactMatch = sections.first(where: { $0.pageRange.contains(pageIndex) }) {
+            return exactMatch
+        }
+
+        return sections.last(where: { ($0.startAnchor?.pageIndex ?? $0.pageRange.lowerBound) <= pageIndex })
     }
 
     private func testBedrockConnection() {
@@ -247,7 +277,7 @@ struct ContentView: View {
         }
 
         if let pageIndex = note.pageIndex,
-           let matchedSection = section(for: pageIndex, in: document) {
+           let matchedSection = section(for: pageIndex, pagePoint: nil, in: document) {
             selectedSection = matchedSection
         }
     }

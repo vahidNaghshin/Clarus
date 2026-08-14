@@ -4,6 +4,7 @@ import PDFKit
 struct PDFSelectionEvent {
     let selectedText: String?
     let pageIndex: Int?
+    let pagePoint: CGPoint?
     let isCommandHeld: Bool
 }
 
@@ -88,7 +89,7 @@ struct PDFViewerView: NSViewRepresentable {
         }
 
         guard let jumpTo else { return }
-        let targetPageIndex = jumpTo.pageRange.lowerBound
+        let targetPageIndex = jumpTo.startAnchor?.pageIndex ?? jumpTo.pageRange.lowerBound
         let currentPageIndex = nsView.currentPage.flatMap { currentPage in
             nsView.document?.index(for: currentPage)
         }
@@ -102,7 +103,14 @@ struct PDFViewerView: NSViewRepresentable {
 
         context.coordinator.lastJumpSectionID = jumpTo.id
         DispatchQueue.main.async {
-            nsView.go(to: page)
+            if let anchor = jumpTo.startAnchor {
+                let destination = PDFDestination(
+                    page: page,
+                    at: CGPoint(x: anchor.x, y: anchor.y))
+                nsView.go(to: destination)
+            } else {
+                nsView.go(to: page)
+            }
         }
     }
 
@@ -121,6 +129,7 @@ struct PDFViewerView: NSViewRepresentable {
         weak var pdfView: PDFView?
         var pendingSelectedText: String?
         var pendingPageIndex: Int?
+        var pendingPagePoint: CGPoint?
         private var pendingMenuRequest: PDFHighlightNoteRequest?
         private var rightClickMonitor: Any?
         private static let managedHighlightPrefix = "persisted-highlight:"
@@ -151,6 +160,10 @@ struct PDFViewerView: NSViewRepresentable {
                     self,
                     name: Notification.Name.PDFViewSelectionChanged,
                     object: pdfView)
+                NotificationCenter.default.removeObserver(
+                    self,
+                    name: Notification.Name.PDFViewPageChanged,
+                    object: pdfView)
             }
         }
 
@@ -159,6 +172,10 @@ struct PDFViewerView: NSViewRepresentable {
                 NotificationCenter.default.removeObserver(
                     self,
                     name: Notification.Name.PDFViewSelectionChanged,
+                    object: existing)
+                NotificationCenter.default.removeObserver(
+                    self,
+                    name: Notification.Name.PDFViewPageChanged,
                     object: existing)
             }
 
@@ -172,6 +189,11 @@ struct PDFViewerView: NSViewRepresentable {
                 self,
                 selector: #selector(handleSelectionChanged),
                 name: Notification.Name.PDFViewSelectionChanged,
+                object: pdfView)
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handlePageChanged),
+                name: Notification.Name.PDFViewPageChanged,
                 object: pdfView)
         }
 
@@ -206,12 +228,43 @@ struct PDFViewerView: NSViewRepresentable {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             pendingSelectedText = selectedText?.isEmpty == true ? nil : selectedText
 
-            pendingPageIndex = pdfView.currentSelection?.pages.first.flatMap {
-                pdfView.document?.index(for: $0)
+            if let page = pdfView.currentSelection?.pages.first {
+                pendingPageIndex = pdfView.document?.index(for: page)
+                let bounds = pdfView.currentSelection?.bounds(for: page) ?? .zero
+                pendingPagePoint = bounds.isEmpty ? nil : CGPoint(x: bounds.midX, y: bounds.midY)
+            } else {
+                pendingPageIndex = nil
+                pendingPagePoint = nil
             }
         }
 
+        @objc private func handlePageChanged() {
+            guard let pdfView else { return }
+
+            let visibleLocation = dominantVisibleLocation(in: pdfView)
+            pendingPageIndex = visibleLocation?.pageIndex
+            pendingPagePoint = visibleLocation?.pointOnPage
+
+            onSelectionChange(
+                PDFSelectionEvent(
+                    selectedText: pendingSelectedText,
+                    pageIndex: pendingPageIndex,
+                    pagePoint: pendingPagePoint,
+                    isCommandHeld: false))
+        }
+
         private func publishPendingSelection(using event: NSEvent) {
+            if let pdfView {
+                let pointInView = pdfView.convert(event.locationInWindow, from: nil)
+                if let clickedPage = pdfView.page(for: pointInView, nearest: true) {
+                    pendingPageIndex = pdfView.document?.index(for: clickedPage)
+                    pendingPagePoint = pdfView.convert(pointInView, to: clickedPage)
+                } else if let visibleLocation = dominantVisibleLocation(in: pdfView) {
+                    pendingPageIndex = visibleLocation.pageIndex
+                    pendingPagePoint = visibleLocation.pointOnPage
+                }
+            }
+
             let isCommandHeld = event.modifierFlags.contains(.command)
 
             guard pendingSelectedText != nil else {
@@ -219,6 +272,7 @@ struct PDFViewerView: NSViewRepresentable {
                     PDFSelectionEvent(
                         selectedText: nil,
                         pageIndex: pendingPageIndex,
+                        pagePoint: pendingPagePoint,
                         isCommandHeld: isCommandHeld))
                 return
             }
@@ -231,7 +285,34 @@ struct PDFViewerView: NSViewRepresentable {
                 PDFSelectionEvent(
                     selectedText: pendingSelectedText,
                     pageIndex: pendingPageIndex,
+                    pagePoint: pendingPagePoint,
                     isCommandHeld: isCommandHeld))
+        }
+
+        private func dominantVisibleLocation(in pdfView: PDFView) -> (pageIndex: Int, pointOnPage: CGPoint)? {
+            let visibleRect = pdfView.visibleRect
+            let visibleMidPoint = NSPoint(x: visibleRect.midX, y: visibleRect.midY)
+
+            if let centerPage = pdfView.page(for: visibleMidPoint, nearest: true) {
+                guard let pageIndex = pdfView.document?.index(for: centerPage) else { return nil }
+                return (pageIndex, pdfView.convert(visibleMidPoint, to: centerPage))
+            }
+
+            let visiblePages = pdfView.visiblePages
+            if !visiblePages.isEmpty {
+                let fallbackPage = visiblePages[visiblePages.count / 2]
+                guard let pageIndex = pdfView.document?.index(for: fallbackPage) else { return nil }
+                let bounds = fallbackPage.bounds(for: .mediaBox)
+                return (pageIndex, CGPoint(x: bounds.midX, y: bounds.midY))
+            }
+
+            if let currentPage = pdfView.currentPage,
+               let pageIndex = pdfView.document?.index(for: currentPage) {
+                let bounds = currentPage.bounds(for: .mediaBox)
+                return (pageIndex, CGPoint(x: bounds.midX, y: bounds.midY))
+            }
+
+            return nil
         }
 
         private func addHighlightForCurrentSelection() {
@@ -319,7 +400,8 @@ struct PDFViewerView: NSViewRepresentable {
                 menu.addItem(googleItem)
             }
 
-            if let noteRequest, noteRequest.selectedText != nil || noteRequest.highlightID != nil {
+                if let noteRequest,
+                    noteRequest.highlightID != nil || (isHighlightModeEnabled && noteRequest.selectedText != nil) {
                 pendingMenuRequest = noteRequest
 
                 let addToNotesItem = NSMenuItem(
