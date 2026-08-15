@@ -38,17 +38,24 @@ struct PDFViewerView: NSViewRepresentable {
     let isHighlightModeEnabled: Bool
     let persistedHighlights: [PersistedHighlight]
     let focusedHighlight: HighlightFocusRequest?
+    let supportsEquationCapture: Bool
+    let llmProviderFactory: () -> any LLMProvider
     let onSelectionChange: (PDFSelectionEvent) -> Void
     let onHighlightCreated: (String?, Int?, [HighlightSegment]) -> Void
     let onHighlightNoteRequest: (PDFHighlightNoteRequest) -> Void
     let onHighlightRemoved: (UUID) -> Void
+    let onEquationCaptured: (EquationCaptureResult) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(
+            documentModel: document,
+            supportsEquationCapture: supportsEquationCapture,
+            llmProviderFactory: llmProviderFactory,
             onSelectionChange: onSelectionChange,
             onHighlightCreated: onHighlightCreated,
             onHighlightNoteRequest: onHighlightNoteRequest,
-            onHighlightRemoved: onHighlightRemoved)
+            onHighlightRemoved: onHighlightRemoved,
+            onEquationCaptured: onEquationCaptured)
     }
 
     func makeNSView(context: Context) -> PDFView {
@@ -71,7 +78,15 @@ struct PDFViewerView: NSViewRepresentable {
         context.coordinator.onHighlightCreated = onHighlightCreated
         context.coordinator.onHighlightNoteRequest = onHighlightNoteRequest
         context.coordinator.onHighlightRemoved = onHighlightRemoved
+        context.coordinator.onEquationCaptured = onEquationCaptured
+        context.coordinator.supportsEquationCapture = supportsEquationCapture
+        context.coordinator.llmProviderFactory = llmProviderFactory
         context.coordinator.isHighlightModeEnabled = isHighlightModeEnabled
+        context.coordinator.equationCaptureController?.update(
+            documentModel: document,
+            supportsVision: supportsEquationCapture,
+            llmProviderFactory: llmProviderFactory,
+            onCaptureResult: onEquationCaptured)
 
         if context.coordinator.loadedDocumentID != document.id {
             nsView.document = PDFKit.PDFDocument(url: document.fileURL)
@@ -119,11 +134,15 @@ struct PDFViewerView: NSViewRepresentable {
         var onHighlightCreated: (String?, Int?, [HighlightSegment]) -> Void
         var onHighlightNoteRequest: (PDFHighlightNoteRequest) -> Void
         var onHighlightRemoved: (UUID) -> Void
+        var onEquationCaptured: (EquationCaptureResult) -> Void
+        var supportsEquationCapture: Bool
+        var llmProviderFactory: () -> any LLMProvider
         var isHighlightModeEnabled = false
         var loadedDocumentID: UUID?
         var lastJumpSectionID: UUID?
         var lastFocusedHighlightToken: UUID?
         var activeFocusedHighlightID: UUID?
+        var equationCaptureController: EquationCaptureController?
         private var activeFocusResetToken: UUID?
         private var lastPersistedHighlights: [PersistedHighlight] = []
         weak var pdfView: PDFView?
@@ -139,15 +158,27 @@ struct PDFViewerView: NSViewRepresentable {
         private static let focusedHighlightDuration: TimeInterval = 3.0
 
         init(
+            documentModel: PDFDocument,
+            supportsEquationCapture: Bool,
+            llmProviderFactory: @escaping () -> any LLMProvider,
             onSelectionChange: @escaping (PDFSelectionEvent) -> Void,
             onHighlightCreated: @escaping (String?, Int?, [HighlightSegment]) -> Void,
             onHighlightNoteRequest: @escaping (PDFHighlightNoteRequest) -> Void,
-            onHighlightRemoved: @escaping (UUID) -> Void
+            onHighlightRemoved: @escaping (UUID) -> Void,
+            onEquationCaptured: @escaping (EquationCaptureResult) -> Void
         ) {
+            self.supportsEquationCapture = supportsEquationCapture
+            self.llmProviderFactory = llmProviderFactory
             self.onSelectionChange = onSelectionChange
             self.onHighlightCreated = onHighlightCreated
             self.onHighlightNoteRequest = onHighlightNoteRequest
             self.onHighlightRemoved = onHighlightRemoved
+            self.onEquationCaptured = onEquationCaptured
+            self.equationCaptureController = EquationCaptureController(
+                documentModel: documentModel,
+                supportsVision: supportsEquationCapture,
+                llmProviderFactory: llmProviderFactory,
+                onCaptureResult: onEquationCaptured)
         }
 
         deinit {
@@ -195,6 +226,8 @@ struct PDFViewerView: NSViewRepresentable {
                 selector: #selector(handlePageChanged),
                 name: Notification.Name.PDFViewPageChanged,
                 object: pdfView)
+
+            equationCaptureController?.attach(to: pdfView)
         }
 
         func installRightClickMonitor(for pdfView: PDFView) {

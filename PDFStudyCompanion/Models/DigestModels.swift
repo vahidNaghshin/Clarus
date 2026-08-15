@@ -31,9 +31,16 @@ struct ChatMessage: Identifiable, Codable {
     var sectionID: UUID?
     var role: Role
     var text: String
+    var imageData: Data?
     var timestamp: Date
 
     enum Role: String, Codable { case user, assistant }
+}
+
+struct EquationChatEvent {
+    var documentID: UUID
+    var sectionID: UUID
+    var message: ChatMessage
 }
 
 /// A saved chat answer or highlight note. Feeds the (future) export

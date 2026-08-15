@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 /// Every LLM backend (Bedrock, a direct API, or a local model) conforms
@@ -5,9 +6,42 @@ import Foundation
 /// specific provider directly. Swapping backends is a settings change,
 /// not a code change.
 protocol LLMProvider {
+    var supportsVision: Bool { get }
+
     /// `context` is pre-assembled by the caller (selection + section +
     /// retrieved passages) — the provider just sends it along.
     func generateText(prompt: String, context: [String]) async throws -> String
+    func generateText(prompt: String, context: [String], images: [LLMImageInput]) async throws -> String
+}
+
+struct LLMImageInput {
+    var data: Data
+    var mimeType: String
+
+    var bedrockFormat: String {
+        switch mimeType.lowercased() {
+        case "image/jpeg", "image/jpg":
+            return "jpeg"
+        case "image/webp":
+            return "webp"
+        case "image/gif":
+            return "gif"
+        default:
+            return "png"
+        }
+    }
+}
+
+extension LLMProvider {
+    var supportsVision: Bool { false }
+
+    func generateText(prompt: String, context: [String], images: [LLMImageInput]) async throws -> String {
+        if images.isEmpty {
+            return try await generateText(prompt: prompt, context: context)
+        }
+
+        throw LLMProviderError.notImplemented("\(String(describing: Self.self)) does not support image input.")
+    }
 }
 
 enum LLMProviderError: LocalizedError {
@@ -39,27 +73,54 @@ struct BedrockProvider: LLMProvider {
     static let defaultProfile = "stormy-api"
     static let defaultRegion = "us-west-2"
     static let defaultModelID = "qwen.qwen3-235b-a22b-2507-v1:0"
+    static let defaultVisionModelID = "us.anthropic.claude-sonnet-5"
 
     var region: String
     var modelID: String
+    var visionModelID: String?
     var profile: String?
 
     static func configured() -> Self {
         BedrockProvider(
             region: defaultRegion,
             modelID: defaultModelID,
+            visionModelID: defaultVisionModelID,
             profile: defaultProfile)
     }
+
+    var supportsVision: Bool { visionModelID != nil }
 
     func testConnection() async throws -> String {
         try await generateText(prompt: "Reply with exactly OK.", context: [])
     }
 
+    func testVisionConnection() async throws -> String {
+        let imageData = try makeVisionTestImageData()
+
+        return try await generateText(
+            prompt: "You are receiving a simple visual test image. Reply with exactly OK.",
+            context: [],
+            images: [LLMImageInput(data: imageData, mimeType: "image/png")])
+    }
+
     func generateText(prompt: String, context: [String]) async throws -> String {
+        try await generateText(prompt: prompt, context: context, images: [])
+    }
+
+    func generateText(prompt: String, context: [String], images: [LLMImageInput]) async throws -> String {
+        let selectedModelID: String
+        if images.isEmpty {
+            selectedModelID = modelID
+        } else if let visionModelID {
+            selectedModelID = visionModelID
+        } else {
+            throw LLMProviderError.notImplemented("This Bedrock configuration does not include a vision-capable model.")
+        }
+
         let messages = [
             BedrockMessage(
                 role: "user",
-                content: [.init(text: composeUserMessage(prompt: prompt, context: context))])
+                content: composeContent(prompt: prompt, context: context, images: images))
         ]
         let messagesData = try JSONEncoder().encode(messages)
         let messagesJSON = String(decoding: messagesData, as: UTF8.self)
@@ -71,13 +132,28 @@ struct BedrockProvider: LLMProvider {
         arguments.append(contentsOf: [
             "--region", region,
             "bedrock-runtime", "converse",
-            "--model-id", modelID,
+            "--model-id", selectedModelID,
             "--messages", messagesJSON,
             "--output", "json"
         ])
 
-        let output = try await runCommand(arguments)
+        let output = try await runCommand(arguments, modelID: selectedModelID)
         return try decodeResponse(output)
+    }
+
+    private func composeContent(prompt: String, context: [String], images: [LLMImageInput]) -> [BedrockContentBlock] {
+        var content: [BedrockContentBlock] = [
+            .init(text: composeUserMessage(prompt: prompt, context: context))
+        ]
+
+        content.append(contentsOf: images.map { image in
+            BedrockContentBlock(
+                image: BedrockImage(
+                    format: image.bedrockFormat,
+                    source: BedrockImageSource(bytes: image.data.base64EncodedString())))
+        })
+
+        return content
     }
 
     private func composeUserMessage(prompt: String, context: [String]) -> String {
@@ -98,7 +174,43 @@ struct BedrockProvider: LLMProvider {
         """
     }
 
-    private func runCommand(_ arguments: [String]) async throws -> Data {
+    private func makeVisionTestImageData() throws -> Data {
+        let size = NSSize(width: 96, height: 96)
+        let image = NSImage(size: size)
+        image.lockFocus()
+
+        NSColor.white.setFill()
+        NSBezierPath(rect: NSRect(origin: .zero, size: size)).fill()
+
+        NSColor.black.setStroke()
+        let border = NSBezierPath(rect: NSRect(x: 8, y: 8, width: 80, height: 80))
+        border.lineWidth = 4
+        border.stroke()
+
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 28, weight: .bold),
+            .foregroundColor: NSColor.black
+        ]
+        let text = NSString(string: "OK")
+        let textSize = text.size(withAttributes: attributes)
+        let textOrigin = NSPoint(
+            x: (size.width - textSize.width) / 2,
+            y: (size.height - textSize.height) / 2)
+        text.draw(at: textOrigin, withAttributes: attributes)
+
+        image.unlockFocus()
+
+        guard let tiffData = image.tiffRepresentation,
+              let imageRep = NSBitmapImageRep(data: tiffData),
+              let pngData = imageRep.representation(using: .png, properties: [:])
+        else {
+            throw LLMProviderError.invalidResponse("Failed to create the visual test image.")
+        }
+
+        return pngData
+    }
+
+    private func runCommand(_ arguments: [String], modelID: String) async throws -> Data {
         let executableURL = try resolveAWSCLIExecutableURL()
 
         return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
@@ -177,11 +289,31 @@ struct BedrockProvider: LLMProvider {
 
 private struct BedrockMessage: Codable {
     var role: String
-    var content: [BedrockContent]
+    var content: [BedrockContentBlock]
 }
 
-private struct BedrockContent: Codable {
-    var text: String
+private struct BedrockContentBlock: Codable {
+    var text: String?
+    var image: BedrockImage?
+
+    init(text: String) {
+        self.text = text
+        self.image = nil
+    }
+
+    init(image: BedrockImage) {
+        self.text = nil
+        self.image = image
+    }
+}
+
+private struct BedrockImage: Codable {
+    var format: String
+    var source: BedrockImageSource
+}
+
+private struct BedrockImageSource: Codable {
+    var bytes: String
 }
 
 private struct BedrockConverseResponse: Decodable {

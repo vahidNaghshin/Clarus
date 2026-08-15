@@ -5,6 +5,7 @@ private struct ChatSheetContext: Identifiable {
     let document: PDFDocument
     let section: Section
     let selectedText: String?
+    let initialMessages: [ChatMessage]
 }
 
 private struct NoteDraftContext: Identifiable {
@@ -32,6 +33,7 @@ struct ContentView: View {
     @State private var noteDraftText = ""
     @State private var focusedHighlight: HighlightFocusRequest?
     @State private var isTestingBedrock = false
+    @State private var isTestingVisionModel = false
     @State private var bedrockStatusMessage: String?
     @State private var isBedrockStatusPresented = false
     @State private var isHistoryPresented = false
@@ -48,7 +50,9 @@ struct ContentView: View {
                         jumpTo: selectedSection,
                         isHighlightModeEnabled: isHighlightModeEnabled,
                         persistedHighlights: historyStore.highlights,
-                        focusedHighlight: focusedHighlight
+                        focusedHighlight: focusedHighlight,
+                        supportsEquationCapture: BedrockProvider.configured().supportsVision,
+                        llmProviderFactory: { BedrockProvider.configured() }
                     ) { event in
                         selectedText = event.selectedText
 
@@ -60,7 +64,8 @@ struct ContentView: View {
                                 chatSheetContext = ChatSheetContext(
                                     document: document,
                                     section: matchedSection,
-                                    selectedText: event.selectedText)
+                                    selectedText: event.selectedText,
+                                    initialMessages: [])
                             }
                         }
                     } onHighlightCreated: { selectedText, pageIndex, segments in
@@ -84,6 +89,8 @@ struct ContentView: View {
                             pageIndex: request.pageIndex)
                     } onHighlightRemoved: { highlightID in
                         historyStore.removeHighlight(document: document, highlightID: highlightID)
+                    } onEquationCaptured: { result in
+                        handleEquationCaptureResult(result, in: document)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
                 } else {
@@ -134,12 +141,20 @@ struct ContentView: View {
             }
 
             ToolbarItem {
+                Button(isTestingVisionModel ? "Testing Visual…" : "Test Visual Model") {
+                    testVisionModelConnection()
+                }
+                .disabled(isTestingVisionModel)
+            }
+
+            ToolbarItem {
                 Button {
                     guard let document, let selectedSection else { return }
                     chatSheetContext = ChatSheetContext(
                         document: document,
                         section: selectedSection,
-                        selectedText: selectedText)
+                        selectedText: selectedText,
+                        initialMessages: [])
                 } label: {
                     Label("Ask", systemImage: "bubble.left.and.bubble.right")
                 }
@@ -151,7 +166,8 @@ struct ContentView: View {
                 document: context.document,
                 section: context.section,
                 selectedText: context.selectedText,
-                historyStore: historyStore)
+                historyStore: historyStore,
+                initialMessages: context.initialMessages)
         }
         .sheet(item: $noteDraftContext) { context in
             NoteComposerSheet(
@@ -258,6 +274,71 @@ struct ContentView: View {
                     isBedrockStatusPresented = true
                 }
             }
+        }
+    }
+
+    private func testVisionModelConnection() {
+        isTestingVisionModel = true
+
+        Task {
+            let provider = BedrockProvider.configured()
+
+            do {
+                let response = try await provider.testVisionConnection()
+                await MainActor.run {
+                    bedrockStatusMessage = "Visual model connected successfully. Model reply: \(response)"
+                    isTestingVisionModel = false
+                    isBedrockStatusPresented = true
+                }
+            } catch {
+                await MainActor.run {
+                    bedrockStatusMessage = error.localizedDescription
+                    isTestingVisionModel = false
+                    isBedrockStatusPresented = true
+                }
+            }
+        }
+    }
+
+    private func handleEquationCaptureResult(_ result: EquationCaptureResult, in document: PDFDocument) {
+        let matchedSection = section(for: result.pageIndex, pagePoint: result.pagePoint, in: document)
+            ?? document.chapters.flatMap(\.sections).first
+        guard let matchedSection else { return }
+
+        selectedSection = matchedSection
+        selectedText = nil
+
+        let assistantMessage = ChatMessage(
+            id: UUID(),
+            documentID: document.id,
+            sectionID: matchedSection.id,
+            role: .assistant,
+            text: result.explanation,
+            imageData: result.imageData,
+            timestamp: Date())
+
+        historyStore.addChatMessage(
+            document: document,
+            section: matchedSection,
+            role: .assistant,
+            text: result.explanation,
+            selectedText: "Equation capture")
+
+        if let chatSheetContext,
+           chatSheetContext.document.id == document.id,
+           chatSheetContext.section.id == matchedSection.id {
+            NotificationCenter.default.post(
+                name: .equationCaptureDidGenerateMessage,
+                object: EquationChatEvent(
+                    documentID: document.id,
+                    sectionID: matchedSection.id,
+                    message: assistantMessage))
+        } else {
+            self.chatSheetContext = ChatSheetContext(
+                document: document,
+                section: matchedSection,
+                selectedText: nil,
+                initialMessages: [assistantMessage])
         }
     }
 
