@@ -57,10 +57,19 @@ struct OutlineSidebarView: View {
                 }
                 .listStyle(.sidebar)
             } else {
-                ContentUnavailableView(
-                    "No Contents",
-                    systemImage: "list.bullet.rectangle",
-                    description: Text("Open a PDF to see its chapter and section structure here."))
+                HIGEmptyStateView(
+                    symbolName: "list.bullet.rectangle.portrait",
+                    symbolSize: 40,
+                    symbolWeight: .thin,
+                    title: "No Contents",
+                    titleSize: 15,
+                    titleWeight: .semibold,
+                    subtitle: "Open a PDF to see its chapter and section structure.",
+                    subtitleSize: 12,
+                    subtitleMaxWidth: 120,
+                    verticalCenterRatio: 0.45,
+                    buttonTitle: nil,
+                    buttonAction: nil)
             }
         }
         .navigationTitle("Contents")

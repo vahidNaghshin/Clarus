@@ -94,13 +94,20 @@ struct ContentView: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
                 } else {
-                    ContentUnavailableView(
-                        "Open a PDF to begin",
-                        systemImage: "doc.text",
-                        description: Text("Click here to choose a PDF file."))
+                    HIGEmptyStateView(
+                        symbolName: "doc.text.magnifyingglass",
+                        symbolSize: 56,
+                        symbolWeight: .ultraLight,
+                        title: "Open a PDF to Begin",
+                        titleSize: 20,
+                        titleWeight: .semibold,
+                        subtitle: "Click below to choose a PDF file from your Mac.",
+                        subtitleSize: 13,
+                        subtitleMaxWidth: 240,
+                        verticalCenterRatio: 0.5,
+                        buttonTitle: "Choose PDF…",
+                        buttonAction: onOpenPDF)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .contentShape(Rectangle())
-                    .onTapGesture(perform: onOpenPDF)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)

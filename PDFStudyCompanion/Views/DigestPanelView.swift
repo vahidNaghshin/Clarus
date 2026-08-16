@@ -13,45 +13,58 @@ struct DigestPanelView: View {
     @State private var isGeneratingQuestions = false
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                if let section {
-                    Text(section.title).font(.title3.bold())
+        Group {
+            if let section {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text(section.title).font(.title3.bold())
 
-                    HStack {
-                        Button(isSummarizing ? "Summarizing…" : "Summarize This Section") {
-                            summarize(section)
+                        HStack {
+                            Button(isSummarizing ? "Summarizing…" : "Summarize This Section") {
+                                summarize(section)
+                            }
+                            .disabled(isBusy || !hasReadableText(section))
+
+                            Button(isGeneratingQuestions ? "Generating…" : "Give Me Overview Questions") {
+                                generateQuestions(for: section)
+                            }
+                            .disabled(isBusy || !hasReadableText(section))
                         }
-                        .disabled(isBusy || !hasReadableText(section))
 
-                        Button(isGeneratingQuestions ? "Generating…" : "Give Me Overview Questions") {
-                            generateQuestions(for: section)
+                        if !summary.isEmpty || isSummarizing || !hasReadableText(section) {
+                            Text(summaryText(for: section))
+                                .foregroundStyle(.secondary)
                         }
-                        .disabled(isBusy || !hasReadableText(section))
-                    }
 
-                    if !summary.isEmpty || isSummarizing || !hasReadableText(section) {
-                        Text(summaryText(for: section))
-                            .foregroundStyle(.secondary)
-                    }
+                        if let errorMessage {
+                            Text(errorMessage)
+                                .foregroundStyle(.red)
+                        }
 
-                    if let errorMessage {
-                        Text(errorMessage)
-                            .foregroundStyle(.red)
-                    }
-
-                    ForEach($questions) { $question in
-                        QuestionView(question: $question) {
-                            guard let document else { return }
-                            historyStore.updateQuestionAnswer(document: document, section: section, question: question)
+                        ForEach($questions) { $question in
+                            QuestionView(question: $question) {
+                                guard let document else { return }
+                                historyStore.updateQuestionAnswer(document: document, section: section, question: question)
+                            }
                         }
                     }
-                } else {
-                    Text("Select a section to see its digest.")
-                        .foregroundStyle(.secondary)
+                    .padding()
                 }
+            } else {
+                HIGEmptyStateView(
+                    symbolName: "sparkles.rectangle.stack",
+                    symbolSize: 40,
+                    symbolWeight: .thin,
+                    title: "No Digest Yet",
+                    titleSize: 15,
+                    titleWeight: .semibold,
+                    subtitle: "Select a section from the contents to generate its AI digest.",
+                    subtitleSize: 12,
+                    subtitleMaxWidth: 160,
+                    verticalCenterRatio: 0.45,
+                    buttonTitle: nil,
+                    buttonAction: nil)
             }
-            .padding()
         }
         .onChange(of: section?.id) { _, _ in
             resetContent()
