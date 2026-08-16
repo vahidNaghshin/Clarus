@@ -141,20 +141,6 @@ struct ContentView: View {
             }
 
             ToolbarItem {
-                Button(isTestingBedrock ? "Testing…" : "Test Bedrock") {
-                    testBedrockConnection()
-                }
-                .disabled(isTestingBedrock)
-            }
-
-            ToolbarItem {
-                Button(isTestingVisionModel ? "Testing Visual…" : "Test Visual Model") {
-                    testVisionModelConnection()
-                }
-                .disabled(isTestingVisionModel)
-            }
-
-            ToolbarItem {
                 Button {
                     guard let document, let selectedSection else { return }
                     chatSheetContext = ChatSheetContext(
@@ -212,6 +198,12 @@ struct ContentView: View {
         .onAppear {
             splitViewVisibility = .all
             historyStore.load(document: document)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .runBedrockConnectionTest)) { _ in
+            testBedrockConnection()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .runVisionModelConnectionTest)) { _ in
+            testVisionModelConnection()
         }
         .onChange(of: document?.id) { _, _ in
             splitViewVisibility = .all

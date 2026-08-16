@@ -2,6 +2,11 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
+extension Notification.Name {
+    static let runBedrockConnectionTest = Notification.Name("runBedrockConnectionTest")
+    static let runVisionModelConnectionTest = Notification.Name("runVisionModelConnectionTest")
+}
+
 private let initialWindowWidth: CGFloat = 1440
 private let initialWindowHeight: CGFloat = 1620
 
@@ -51,6 +56,16 @@ struct PDFStudyCompanionApp: App {
                     openPDF()
                 }
                 .keyboardShortcut("o", modifiers: .command)
+            }
+
+            CommandMenu("Debug") {
+                Button("Test Bedrock") {
+                    NotificationCenter.default.post(name: .runBedrockConnectionTest, object: nil)
+                }
+
+                Button("Test Visual Model") {
+                    NotificationCenter.default.post(name: .runVisionModelConnectionTest, object: nil)
+                }
             }
         }
     }
