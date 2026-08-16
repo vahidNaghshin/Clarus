@@ -2,6 +2,36 @@ import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 
+private let initialWindowWidth: CGFloat = 1440
+private let initialWindowHeight: CGFloat = 1620
+
+private struct InitialWindowSizeAccessor: NSViewRepresentable {
+    let size: NSSize
+
+    func makeNSView(context: Context) -> InitialWindowSizeView {
+        let view = InitialWindowSizeView()
+        view.size = size
+        return view
+    }
+
+    func updateNSView(_ nsView: InitialWindowSizeView, context: Context) {
+        nsView.size = size
+    }
+}
+
+private final class InitialWindowSizeView: NSView {
+    var size: NSSize = .zero
+    private var didApplySize = false
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+
+        guard let window, !didApplySize else { return }
+        window.setContentSize(size)
+        didApplySize = true
+    }
+}
+
 @main
 struct PDFStudyCompanionApp: App {
     @State private var document: PDFDocument?
@@ -10,7 +40,11 @@ struct PDFStudyCompanionApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView(document: document, onOpenPDF: openPDF, historyStore: historyStore)
+                .background(
+                    InitialWindowSizeAccessor(
+                        size: NSSize(width: initialWindowWidth, height: initialWindowHeight)))
         }
+        .defaultSize(width: initialWindowWidth, height: initialWindowHeight)
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button("Open PDF…") {
