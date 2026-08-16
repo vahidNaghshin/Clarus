@@ -195,6 +195,7 @@ struct ContentView: View {
         } message: {
             Text(bedrockStatusMessage ?? "No status available.")
         }
+        .bedrockStatusBanner()
         .onAppear {
             splitViewVisibility = .all
             historyStore.load(document: document)

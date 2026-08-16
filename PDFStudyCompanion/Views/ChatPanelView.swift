@@ -84,6 +84,7 @@ struct ChatPanelView: View {
         }
         .padding()
         .frame(minWidth: 560, minHeight: 520)
+        .bedrockStatusBanner()
         .onReceive(NotificationCenter.default.publisher(for: .equationCaptureDidGenerateMessage)) { notification in
             guard let event = notification.object as? EquationChatEvent,
                   event.documentID == document.id,

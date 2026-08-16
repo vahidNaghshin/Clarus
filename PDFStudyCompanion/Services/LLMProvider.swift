@@ -108,6 +108,9 @@ struct BedrockProvider: LLMProvider {
     }
 
     func generateText(prompt: String, context: [String], images: [LLMImageInput]) async throws -> String {
+        let requestID = UUID()
+        let requestKind: BedrockRequestKind = images.isEmpty ? .text : .visual
+
         let selectedModelID: String
         if images.isEmpty {
             selectedModelID = modelID
@@ -117,28 +120,60 @@ struct BedrockProvider: LLMProvider {
             throw LLMProviderError.notImplemented("This Bedrock configuration does not include a vision-capable model.")
         }
 
-        let messages = [
-            BedrockMessage(
-                role: "user",
-                content: composeContent(prompt: prompt, context: context, images: images))
-        ]
-        let messagesData = try JSONEncoder().encode(messages)
-        let messagesJSON = String(decoding: messagesData, as: UTF8.self)
+        await postStatus(
+            BedrockRequestStatusEvent(
+                id: requestID,
+                kind: requestKind,
+                phase: .started,
+                message: nil))
 
-        var arguments: [String] = []
-        if let profile {
-            arguments.append(contentsOf: ["--profile", profile])
+        do {
+            let messages = [
+                BedrockMessage(
+                    role: "user",
+                    content: composeContent(prompt: prompt, context: context, images: images))
+            ]
+            let messagesData = try JSONEncoder().encode(messages)
+            let messagesJSON = String(decoding: messagesData, as: UTF8.self)
+
+            var arguments: [String] = []
+            if let profile {
+                arguments.append(contentsOf: ["--profile", profile])
+            }
+            arguments.append(contentsOf: [
+                "--region", region,
+                "bedrock-runtime", "converse",
+                "--model-id", selectedModelID,
+                "--messages", messagesJSON,
+                "--output", "json"
+            ])
+
+            let output = try await runCommand(arguments, modelID: selectedModelID)
+            let response = try decodeResponse(output)
+
+            await postStatus(
+                BedrockRequestStatusEvent(
+                    id: requestID,
+                    kind: requestKind,
+                    phase: .succeeded,
+                    message: nil))
+
+            return response
+        } catch {
+            await postStatus(
+                BedrockRequestStatusEvent(
+                    id: requestID,
+                    kind: requestKind,
+                    phase: .failed,
+                    message: error.localizedDescription))
+            throw error
         }
-        arguments.append(contentsOf: [
-            "--region", region,
-            "bedrock-runtime", "converse",
-            "--model-id", selectedModelID,
-            "--messages", messagesJSON,
-            "--output", "json"
-        ])
+    }
 
-        let output = try await runCommand(arguments, modelID: selectedModelID)
-        return try decodeResponse(output)
+    private func postStatus(_ event: BedrockRequestStatusEvent) async {
+        await MainActor.run {
+            NotificationCenter.default.post(name: .bedrockRequestStatusDidChange, object: event)
+        }
     }
 
     private func composeContent(prompt: String, context: [String], images: [LLMImageInput]) -> [BedrockContentBlock] {
