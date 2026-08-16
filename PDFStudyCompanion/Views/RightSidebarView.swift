@@ -202,9 +202,7 @@ private struct NoteDetailSheet: View {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Note")
                             .font(.subheadline.weight(.semibold))
-                        Text(note.text)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .textSelection(.enabled)
+                        MarkdownLatexView(text: note.text)
                     }
 
                     if hasReference(note) {

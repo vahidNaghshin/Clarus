@@ -67,7 +67,7 @@ struct ChatPanelView: View {
                                     .clipShape(RoundedRectangle(cornerRadius: 8))
                             }
 
-                            Text(message.text)
+                            MarkdownLatexView(text: message.text)
 
                             if message.role == .assistant {
                                 Button("Add this to note") {
