@@ -11,8 +11,11 @@ struct ChatPanelView: View {
     let section: Section
     let selectedText: String?
     let initialMessages: [ChatMessage]
+    let defaultNoteReference: NoteReferenceContext?
+    let onAddAssistantMessageToNote: (ChatMessage, NoteReferenceContext?) -> Void
     @ObservedObject var historyStore: InteractionHistoryStore
     @State private var messages: [ChatMessage] = []
+    @State private var noteReferencesByMessageID: [UUID: NoteReferenceContext]
     @State private var draft: String = ""
     @State private var errorMessage: String?
     @State private var isSending = false
@@ -22,14 +25,20 @@ struct ChatPanelView: View {
         section: Section,
         selectedText: String?,
         historyStore: InteractionHistoryStore,
-        initialMessages: [ChatMessage] = []
+        initialMessages: [ChatMessage] = [],
+        defaultNoteReference: NoteReferenceContext? = nil,
+        initialNoteReferences: [UUID: NoteReferenceContext] = [:],
+        onAddAssistantMessageToNote: @escaping (ChatMessage, NoteReferenceContext?) -> Void
     ) {
         self.document = document
         self.section = section
         self.selectedText = selectedText
         self.initialMessages = initialMessages
+        self.defaultNoteReference = defaultNoteReference
+        self.onAddAssistantMessageToNote = onAddAssistantMessageToNote
         self.historyStore = historyStore
         _messages = State(initialValue: initialMessages)
+        _noteReferencesByMessageID = State(initialValue: initialNoteReferences)
     }
 
     var body: some View {
@@ -59,6 +68,13 @@ struct ChatPanelView: View {
                             }
 
                             Text(message.text)
+
+                            if message.role == .assistant {
+                                Button("Add this to note") {
+                                    onAddAssistantMessageToNote(message, noteReferencesByMessageID[message.id] ?? defaultNoteReference)
+                                }
+                                .buttonStyle(.link)
+                            }
                         }
                         .padding(10)
                         .background(message.role == .user ? Color.accentColor.opacity(0.15) : Color.gray.opacity(0.15))
@@ -92,6 +108,9 @@ struct ChatPanelView: View {
             else { return }
 
             messages.append(event.message)
+            if let noteReference = event.noteReference {
+                noteReferencesByMessageID[event.message.id] = noteReference
+            }
         }
     }
 
@@ -132,6 +151,9 @@ struct ChatPanelView: View {
                         imageData: nil,
                         timestamp: Date())
                     messages.append(assistantMessage)
+                    if let defaultNoteReference {
+                        noteReferencesByMessageID[assistantMessage.id] = defaultNoteReference
+                    }
                     historyStore.addChatMessage(document: document, section: section, role: .assistant, text: reply, selectedText: selectedText)
                     isSending = false
                 }

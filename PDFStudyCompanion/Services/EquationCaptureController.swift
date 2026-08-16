@@ -21,6 +21,7 @@ enum ProcessingStep: String, Equatable {
 struct EquationCaptureResult {
     var pageIndex: Int
     var pagePoint: CGPoint
+    var referenceSegments: [HighlightSegment]
     var imageData: Data
     var explanation: String
 }
@@ -173,6 +174,7 @@ final class EquationCaptureController: NSObject {
                     EquationCaptureResult(
                         pageIndex: located.pageIndex,
                         pagePoint: CGPoint(x: located.rectOnPage.midX, y: located.rectOnPage.midY),
+                        referenceSegments: [HighlightSegment(pageIndex: located.pageIndex, bounds: located.rectOnPage)],
                         imageData: payload.imageData,
                         explanation: payload.explanation))
                 self.transition(to: .idle)

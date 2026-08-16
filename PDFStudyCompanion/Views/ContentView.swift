@@ -6,6 +6,8 @@ private struct ChatSheetContext: Identifiable {
     let section: Section
     let selectedText: String?
     let initialMessages: [ChatMessage]
+    let defaultNoteReference: NoteReferenceContext?
+    let initialNoteReferences: [UUID: NoteReferenceContext]
 }
 
 private struct NoteDraftContext: Identifiable {
@@ -28,6 +30,8 @@ struct ContentView: View {
     @State private var isHighlightModeEnabled = false
     @State private var selectedSection: Section?
     @State private var selectedText: String?
+    @State private var selectedPageIndex: Int?
+    @State private var selectedReferenceSegments: [HighlightSegment] = []
     @State private var chatSheetContext: ChatSheetContext?
     @State private var noteDraftContext: NoteDraftContext?
     @State private var noteDraftText = ""
@@ -55,17 +59,27 @@ struct ContentView: View {
                         llmProviderFactory: { BedrockProvider.configured() }
                     ) { event in
                         selectedText = event.selectedText
+                        selectedPageIndex = event.pageIndex
+                        selectedReferenceSegments = event.referenceSegments
 
                         guard let pageIndex = event.pageIndex else { return }
                         if let matchedSection = section(for: pageIndex, pagePoint: event.pagePoint, in: document) {
                             selectedSection = matchedSection
 
                             if event.isCommandHeld, event.selectedText != nil {
+                                let noteReference = noteReferenceContext(
+                                    section: matchedSection,
+                                    selectedText: event.selectedText,
+                                    pageIndex: event.pageIndex,
+                                    highlightID: nil,
+                                    segments: event.referenceSegments)
                                 chatSheetContext = ChatSheetContext(
                                     document: document,
                                     section: matchedSection,
                                     selectedText: event.selectedText,
-                                    initialMessages: [])
+                                    initialMessages: [],
+                                    defaultNoteReference: noteReference,
+                                    initialNoteReferences: [:])
                             }
                         }
                     } onHighlightCreated: { selectedText, pageIndex, segments in
@@ -143,11 +157,19 @@ struct ContentView: View {
             ToolbarItem {
                 Button {
                     guard let document, let selectedSection else { return }
+                    let noteReference = noteReferenceContext(
+                        section: selectedSection,
+                        selectedText: selectedText,
+                        pageIndex: selectedPageIndex,
+                        highlightID: nil,
+                        segments: selectedReferenceSegments)
                     chatSheetContext = ChatSheetContext(
                         document: document,
                         section: selectedSection,
                         selectedText: selectedText,
-                        initialMessages: [])
+                        initialMessages: [],
+                        defaultNoteReference: noteReference,
+                        initialNoteReferences: [:])
                 } label: {
                     Label("Ask", systemImage: "bubble.left.and.bubble.right")
                 }
@@ -160,7 +182,16 @@ struct ContentView: View {
                 section: context.section,
                 selectedText: context.selectedText,
                 historyStore: historyStore,
-                initialMessages: context.initialMessages)
+                initialMessages: context.initialMessages,
+                defaultNoteReference: context.defaultNoteReference,
+                initialNoteReferences: context.initialNoteReferences,
+                onAddAssistantMessageToNote: { message, noteReference in
+                    addAssistantMessageToNote(
+                        message,
+                        reference: noteReference,
+                        document: context.document,
+                        fallbackSection: context.section)
+                })
         }
         .sheet(item: $noteDraftContext) { context in
             NoteComposerSheet(
@@ -210,6 +241,8 @@ struct ContentView: View {
             splitViewVisibility = .all
             selectedSection = nil
             selectedText = nil
+            selectedPageIndex = nil
+            selectedReferenceSegments = []
             chatSheetContext = nil
             noteDraftContext = nil
             noteDraftText = ""
@@ -305,8 +338,17 @@ struct ContentView: View {
             ?? document.chapters.flatMap(\.sections).first
         guard let matchedSection else { return }
 
+        let noteReference = noteReferenceContext(
+            section: matchedSection,
+            selectedText: nil,
+            pageIndex: result.pageIndex,
+            highlightID: nil,
+            segments: result.referenceSegments)
+
         selectedSection = matchedSection
         selectedText = nil
+        selectedPageIndex = result.pageIndex
+        selectedReferenceSegments = result.referenceSegments
 
         let assistantMessage = ChatMessage(
             id: UUID(),
@@ -332,13 +374,73 @@ struct ContentView: View {
                 object: EquationChatEvent(
                     documentID: document.id,
                     sectionID: matchedSection.id,
-                    message: assistantMessage))
+                    message: assistantMessage,
+                    noteReference: noteReference))
         } else {
             self.chatSheetContext = ChatSheetContext(
                 document: document,
                 section: matchedSection,
                 selectedText: nil,
-                initialMessages: [assistantMessage])
+                initialMessages: [assistantMessage],
+                defaultNoteReference: nil,
+                initialNoteReferences: [assistantMessage.id: noteReference].compactMapValues { $0 })
+        }
+    }
+
+    private func noteReferenceContext(
+        section: Section?,
+        selectedText: String?,
+        pageIndex: Int?,
+        highlightID: UUID?,
+        segments: [HighlightSegment]
+    ) -> NoteReferenceContext? {
+        guard section != nil || pageIndex != nil || selectedText != nil || !segments.isEmpty else {
+            return nil
+        }
+
+        return NoteReferenceContext(
+            sectionID: section?.id,
+            sectionTitle: section?.title,
+            selectedText: selectedText,
+            pageIndex: pageIndex,
+            highlightID: highlightID,
+            segments: segments)
+    }
+
+    private func addAssistantMessageToNote(
+        _ message: ChatMessage,
+        reference: NoteReferenceContext?,
+        document: PDFDocument,
+        fallbackSection: Section
+    ) {
+        let resolvedSection = reference?.sectionID.flatMap { sectionID in
+            document.chapters.flatMap(\.sections).first(where: { $0.id == sectionID })
+        } ?? fallbackSection
+
+        var highlightID = reference?.highlightID
+        if highlightID == nil,
+           let reference,
+           !reference.segments.isEmpty {
+            let persistedHighlight = historyStore.addHighlight(
+                document: document,
+                section: resolvedSection,
+                selectedText: reference.selectedText,
+                segments: reference.segments)
+            highlightID = persistedHighlight.id
+        }
+
+        historyStore.addNote(
+            document: document,
+            section: resolvedSection,
+            highlightID: highlightID,
+            selectedText: reference?.selectedText,
+            pageIndex: reference?.pageIndex,
+            text: message.text,
+            sourceChatMessageID: message.id)
+
+        if let highlightID {
+            selectedSection = resolvedSection
+            focusedHighlight = HighlightFocusRequest(highlightID: highlightID, token: UUID())
         }
     }
 

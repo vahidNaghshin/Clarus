@@ -5,6 +5,7 @@ struct PDFSelectionEvent {
     let selectedText: String?
     let pageIndex: Int?
     let pagePoint: CGPoint?
+    let referenceSegments: [HighlightSegment]
     let isCommandHeld: Bool
 }
 
@@ -149,6 +150,7 @@ struct PDFViewerView: NSViewRepresentable {
         var pendingSelectedText: String?
         var pendingPageIndex: Int?
         var pendingPagePoint: CGPoint?
+        var pendingReferenceSegments: [HighlightSegment] = []
         private var pendingMenuRequest: PDFHighlightNoteRequest?
         private var rightClickMonitor: Any?
         private static let managedHighlightPrefix = "persisted-highlight:"
@@ -261,6 +263,13 @@ struct PDFViewerView: NSViewRepresentable {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             pendingSelectedText = selectedText?.isEmpty == true ? nil : selectedText
 
+            if let selection = pdfView.currentSelection,
+               let document = pdfView.document {
+                pendingReferenceSegments = highlightSegments(for: selection, in: document)
+            } else {
+                pendingReferenceSegments = []
+            }
+
             if let page = pdfView.currentSelection?.pages.first {
                 pendingPageIndex = pdfView.document?.index(for: page)
                 let bounds = pdfView.currentSelection?.bounds(for: page) ?? .zero
@@ -283,6 +292,7 @@ struct PDFViewerView: NSViewRepresentable {
                     selectedText: pendingSelectedText,
                     pageIndex: pendingPageIndex,
                     pagePoint: pendingPagePoint,
+                    referenceSegments: pendingReferenceSegments,
                     isCommandHeld: false))
         }
 
@@ -306,6 +316,7 @@ struct PDFViewerView: NSViewRepresentable {
                         selectedText: nil,
                         pageIndex: pendingPageIndex,
                         pagePoint: pendingPagePoint,
+                        referenceSegments: [],
                         isCommandHeld: isCommandHeld))
                 return
             }
@@ -319,6 +330,7 @@ struct PDFViewerView: NSViewRepresentable {
                     selectedText: pendingSelectedText,
                     pageIndex: pendingPageIndex,
                     pagePoint: pendingPagePoint,
+                    referenceSegments: pendingReferenceSegments,
                     isCommandHeld: isCommandHeld))
         }
 
@@ -354,6 +366,14 @@ struct PDFViewerView: NSViewRepresentable {
                   let document = pdfView.document
             else { return }
 
+            let segments = highlightSegments(for: selection, in: document)
+
+            guard !segments.isEmpty else { return }
+
+            onHighlightCreated(pendingSelectedText, segments.first?.pageIndex, segments)
+        }
+
+        private func highlightSegments(for selection: PDFSelection, in document: PDFKit.PDFDocument) -> [HighlightSegment] {
             var segments: [HighlightSegment] = []
 
             for lineSelection in selection.selectionsByLine() {
@@ -374,9 +394,7 @@ struct PDFViewerView: NSViewRepresentable {
                 }
             }
 
-            guard !segments.isEmpty else { return }
-
-            onHighlightCreated(pendingSelectedText, segments.first?.pageIndex, segments)
+            return segments
         }
 
         private func noteRequestForContextMenu(at pointInView: NSPoint) -> PDFHighlightNoteRequest? {

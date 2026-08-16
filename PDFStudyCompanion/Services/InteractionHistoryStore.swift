@@ -102,7 +102,7 @@ final class InteractionHistoryStore: ObservableObject {
         persistIfCurrent(documentKey: documentKey)
     }
 
-    func addNote(document: PDFDocument, section: Section?, highlightID: UUID?, selectedText: String?, pageIndex: Int?, text: String) {
+    func addNote(document: PDFDocument, section: Section?, highlightID: UUID?, selectedText: String?, pageIndex: Int?, text: String, sourceChatMessageID: UUID? = nil) {
         let note = Note(
             id: UUID(),
             documentID: document.id,
@@ -112,7 +112,7 @@ final class InteractionHistoryStore: ObservableObject {
             selectedText: selectedText,
             pageIndex: pageIndex,
             text: text,
-            sourceChatMessageID: nil,
+            sourceChatMessageID: sourceChatMessageID,
             createdAt: Date())
 
         let documentKey = documentKey(for: document)

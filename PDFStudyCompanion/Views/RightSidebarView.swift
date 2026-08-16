@@ -5,6 +5,7 @@ struct RightSidebarView: View {
     let section: Section?
     @ObservedObject var historyStore: InteractionHistoryStore
     let onSelectNote: (Note) -> Void
+    @State private var selectedNote: Note?
 
     var body: some View {
         TabView {
@@ -13,10 +14,18 @@ struct RightSidebarView: View {
                     Label("Study", systemImage: "text.book.closed")
                 }
 
-            NotesPanelView(historyStore: historyStore, onSelectNote: onSelectNote)
+            NotesPanelView(historyStore: historyStore) { note in
+                selectedNote = note
+            }
                 .tabItem {
                     Label("Notes", systemImage: "note.text")
                 }
+        }
+        .sheet(item: $selectedNote) { note in
+            NoteDetailSheet(note: note, onOpenReference: {
+                selectedNote = nil
+                onSelectNote(note)
+            })
         }
     }
 }
@@ -34,18 +43,12 @@ private struct NotesPanelView: View {
                     description: Text("Right-click a highlighted passage in the PDF to add a note with a reference back to that spot."))
             } else {
                 List(historyStore.notes) { note in
-                    Group {
-                        if hasReference(note) {
-                            Button {
-                                onSelectNote(note)
-                            } label: {
-                                noteRow(for: note)
-                            }
-                            .buttonStyle(.plain)
-                        } else {
+                    Button {
+                        onSelectNote(note)
+                    } label: {
                             noteRow(for: note)
-                        }
                     }
+                    .buttonStyle(.plain)
                     .listRowInsets(EdgeInsets(top: 4, leading: 8, bottom: 4, trailing: 8))
                 }
                 .listStyle(.sidebar)
@@ -164,5 +167,71 @@ struct NoteComposerSheet: View {
             }
         }
         .frame(minWidth: 480, minHeight: 360)
+    }
+}
+
+private struct NoteDetailSheet: View {
+    let note: Note
+    let onOpenReference: () -> Void
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack(alignment: .firstTextBaseline) {
+                        Text(title)
+                            .font(.title3.weight(.semibold))
+                        Spacer(minLength: 12)
+                        Text(note.createdAt.formatted(date: .abbreviated, time: .shortened))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if let selectedText = note.selectedText, !selectedText.isEmpty {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Reference")
+                                .font(.subheadline.weight(.semibold))
+                            Text(selectedText)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(10)
+                                .background(Color.secondary.opacity(0.08))
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Note")
+                            .font(.subheadline.weight(.semibold))
+                        Text(note.text)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                    }
+
+                    if hasReference(note) {
+                        Button("Open Reference", action: onOpenReference)
+                            .buttonStyle(.borderedProminent)
+                    }
+                }
+                .padding()
+            }
+            .navigationTitle("Note")
+        }
+        .frame(minWidth: 520, minHeight: 380)
+    }
+
+    private var title: String {
+        if let sectionTitle = note.sectionTitle, !sectionTitle.isEmpty {
+            return sectionTitle
+        }
+
+        if let pageIndex = note.pageIndex {
+            return "Page \(pageIndex + 1)"
+        }
+
+        return "Saved Note"
+    }
+
+    private func hasReference(_ note: Note) -> Bool {
+        note.highlightID != nil || note.pageIndex != nil || note.sectionID != nil
     }
 }

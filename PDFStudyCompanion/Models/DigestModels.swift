@@ -41,6 +41,16 @@ struct EquationChatEvent {
     var documentID: UUID
     var sectionID: UUID
     var message: ChatMessage
+    var noteReference: NoteReferenceContext?
+}
+
+struct NoteReferenceContext {
+    var sectionID: UUID?
+    var sectionTitle: String?
+    var selectedText: String?
+    var pageIndex: Int?
+    var highlightID: UUID?
+    var segments: [HighlightSegment]
 }
 
 /// A saved chat answer or highlight note. Feeds the (future) export
