@@ -439,7 +439,7 @@ struct ContentView: View {
             sourceChatMessageID: message.id)
 
         if let highlightID {
-            selectedSection = resolvedSection
+            selectedSection = nil
             focusedHighlight = HighlightFocusRequest(highlightID: highlightID, token: UUID())
         }
     }
@@ -450,7 +450,12 @@ struct ContentView: View {
         selectedText = note.selectedText
 
         if let highlightID = note.highlightID {
+            selectedSection = nil
             focusedHighlight = HighlightFocusRequest(highlightID: highlightID, token: UUID())
+            if let pageIndex = note.pageIndex {
+                selectedPageIndex = pageIndex
+            }
+            return
         }
 
         if let sectionID = note.sectionID,

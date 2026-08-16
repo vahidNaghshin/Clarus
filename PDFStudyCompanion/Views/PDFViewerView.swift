@@ -101,6 +101,7 @@ struct PDFViewerView: NSViewRepresentable {
             context.coordinator.lastFocusedHighlightToken = focusedHighlight?.token
             if let focusedHighlight {
                 context.coordinator.focusHighlight(withID: focusedHighlight.highlightID, in: nsView)
+                return
             }
         }
 
@@ -589,6 +590,7 @@ struct PDFViewerView: NSViewRepresentable {
         func focusHighlight(withID highlightID: UUID, in pdfView: PDFView) {
             guard let document = pdfView.document else { return }
             activeFocusedHighlightID = highlightID
+            let targetSegments = lastPersistedHighlights.first(where: { $0.id == highlightID })?.segments ?? []
 
             var targetPage: PDFPage?
             for pageIndex in 0..<document.pageCount {
@@ -606,7 +608,13 @@ struct PDFViewerView: NSViewRepresentable {
             // waiting for the next unrelated SwiftUI update.
             syncManagedHighlights(in: pdfView, persistedHighlights: lastPersistedHighlights)
 
-            if let targetPage {
+            if let targetSegment = targetSegments.first,
+               let targetPage = document.page(at: targetSegment.pageIndex) {
+                let destination = PDFDestination(
+                    page: targetPage,
+                    at: CGPoint(x: targetSegment.bounds.midX, y: targetSegment.bounds.maxY))
+                pdfView.go(to: destination)
+            } else if let targetPage {
                 pdfView.go(to: targetPage)
             }
 
