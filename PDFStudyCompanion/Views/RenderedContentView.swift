@@ -262,9 +262,43 @@ function renderMathInElement(el,opts){}
 """
 
 private let markdownJS: String = """
+function mdEscapeHTML(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// LaTeX math (both inline and display) is extracted *before* any other
+// Markdown transformation runs, and restored verbatim afterwards. This
+// keeps expressions like `x_1 + x_2` or a `$$...$$` block spanning
+// multiple lines from being mangled by the italic (`_..._`) or newline
+// (`\\n` -> `<br>`) rules below, which previously split the delimiters
+// across separate HTML nodes so KaTeX's auto-render couldn't find them,
+// leaving the raw `$`-wrapped text on screen.
+function extractMath(md) {
+  var blocks = [];
+  function stash(match) {
+    var token = '\\uE000' + blocks.length + '\\uE001';
+    blocks.push(match);
+    return token;
+  }
+  var text = md
+    .replace(/\\$\\$[\\s\\S]+?\\$\\$/g, stash)
+    .replace(/\\\\\\[[\\s\\S]+?\\\\\\]/g, stash)
+    .replace(/\\\\\\([\\s\\S]+?\\\\\\)/g, stash)
+    .replace(/\\$[^\\$\\n]+?\\$/g, stash);
+  return { text: text, blocks: blocks };
+}
+
+function restoreMath(html, blocks) {
+  for (var i = 0; i < blocks.length; i++) {
+    var token = '\\uE000' + i + '\\uE001';
+    html = html.split(token).join(mdEscapeHTML(blocks[i]));
+  }
+  return html;
+}
+
 function mdToHTML(md) {
-  var s = md
-    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+  var extracted = extractMath(md);
+  var s = mdEscapeHTML(extracted.text)
     .replace(/```([\\s\\S]*?)```/g, function(_,c){return '<pre><code>'+c+'</code></pre>';})
     .replace(/`([^`]+)`/g,'<code>$1</code>')
     .replace(/^######\\s+(.+)$/gm,'<h6>$1</h6>')
@@ -287,6 +321,6 @@ function mdToHTML(md) {
     })
     .replace(/\\n\\n+/g,'</p><p>')
     .replace(/\\n/g,'<br>');
-  return '<p>'+s+'</p>';
+  return restoreMath('<p>'+s+'</p>', extracted.blocks);
 }
 """
