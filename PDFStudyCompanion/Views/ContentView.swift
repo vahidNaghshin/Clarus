@@ -29,6 +29,7 @@ struct ContentView: View {
     @State private var splitViewVisibility: NavigationSplitViewVisibility = .all
     @State private var isHighlightModeEnabled = false
     @State private var selectedSection: Section?
+    @State private var sectionJumpRequest: SectionJumpRequest?
     @State private var selectedText: String?
     @State private var selectedPageIndex: Int?
     @State private var selectedReferenceSegments: [HighlightSegment] = []
@@ -44,14 +45,16 @@ struct ContentView: View {
 
     var body: some View {
         NavigationSplitView(columnVisibility: $splitViewVisibility) {
-            OutlineSidebarView(document: document, selection: $selectedSection)
+            OutlineSidebarView(document: document, selection: $selectedSection, onSelect: { section in
+                sectionJumpRequest = SectionJumpRequest(section: section, token: UUID())
+            })
                 .navigationSplitViewColumnWidth(min: 150, ideal: 190, max: 360)
         } content: {
             Group {
                 if let document {
                     PDFViewerView(
                         document: document,
-                        jumpTo: selectedSection,
+                        jumpTo: sectionJumpRequest,
                         isHighlightModeEnabled: isHighlightModeEnabled,
                         persistedHighlights: historyStore.highlights,
                         focusedHighlight: focusedHighlight,
@@ -240,6 +243,7 @@ struct ContentView: View {
         .onChange(of: document?.id) { _, _ in
             splitViewVisibility = .all
             selectedSection = nil
+            sectionJumpRequest = nil
             selectedText = nil
             selectedPageIndex = nil
             selectedReferenceSegments = []
@@ -461,12 +465,14 @@ struct ContentView: View {
         if let sectionID = note.sectionID,
            let matchedSection = document.chapters.flatMap(\.sections).first(where: { $0.id == sectionID }) {
             selectedSection = matchedSection
+            sectionJumpRequest = SectionJumpRequest(section: matchedSection, token: UUID())
             return
         }
 
         if let pageIndex = note.pageIndex,
            let matchedSection = section(for: pageIndex, pagePoint: nil, in: document) {
             selectedSection = matchedSection
+            sectionJumpRequest = SectionJumpRequest(section: matchedSection, token: UUID())
         }
     }
 

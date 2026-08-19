@@ -3,6 +3,7 @@ import SwiftUI
 struct OutlineSidebarView: View {
     let document: PDFDocument?
     @Binding var selection: Section?
+    var onSelect: ((Section) -> Void)? = nil
     @State private var expandedChapterIDs: Set<UUID> = []
 
     var body: some View {
@@ -23,6 +24,7 @@ struct OutlineSidebarView: View {
                             ForEach(chapter.sections) { section in
                                 Button {
                                     selection = section
+                                    onSelect?(section)
                                 } label: {
                                     VStack(alignment: .leading, spacing: 4) {
                                         Text(section.title)

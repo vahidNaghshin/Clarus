@@ -20,6 +20,20 @@ struct HighlightFocusRequest: Equatable {
     let token: UUID
 }
 
+/// An explicit request to jump the PDF view to a section, e.g. from tapping
+/// an outline entry or opening a note reference. This is intentionally
+/// decoupled from "the section currently being viewed" (which changes
+/// continuously as the user scrolls, selects text, or creates highlights)
+/// so that those incidental updates never cause an unwanted page jump.
+struct SectionJumpRequest: Equatable {
+    let section: Section
+    let token: UUID
+
+    static func == (lhs: SectionJumpRequest, rhs: SectionJumpRequest) -> Bool {
+        lhs.token == rhs.token
+    }
+}
+
 final class SelectionAwarePDFView: PDFView {
     var onMouseUp: ((NSEvent) -> Void)?
 
@@ -35,7 +49,7 @@ final class SelectionAwarePDFView: PDFView {
 /// selected string up to ContentView).
 struct PDFViewerView: NSViewRepresentable {
     let document: PDFDocument
-    let jumpTo: Section?
+    let jumpTo: SectionJumpRequest?
     let isHighlightModeEnabled: Bool
     let persistedHighlights: [PersistedHighlight]
     let focusedHighlight: HighlightFocusRequest?
@@ -92,7 +106,7 @@ struct PDFViewerView: NSViewRepresentable {
         if context.coordinator.loadedDocumentID != document.id {
             nsView.document = PDFKit.PDFDocument(url: document.fileURL)
             context.coordinator.loadedDocumentID = document.id
-            context.coordinator.lastJumpSectionID = nil
+            context.coordinator.lastJumpToken = nil
         }
 
         context.coordinator.syncManagedHighlights(in: nsView, persistedHighlights: persistedHighlights)
@@ -105,22 +119,15 @@ struct PDFViewerView: NSViewRepresentable {
             }
         }
 
-        guard let jumpTo else { return }
-        let targetPageIndex = jumpTo.startAnchor?.pageIndex ?? jumpTo.pageRange.lowerBound
-        let currentPageIndex = nsView.currentPage.flatMap { currentPage in
-            nsView.document?.index(for: currentPage)
-        }
-        let alreadyShowingTargetSection =
-            context.coordinator.lastJumpSectionID == jumpTo.id &&
-            currentPageIndex == targetPageIndex
+        guard let jumpTo, jumpTo.token != context.coordinator.lastJumpToken else { return }
 
-        guard !alreadyShowingTargetSection,
-              let page = nsView.document?.page(at: targetPageIndex)
-        else { return }
+        let section = jumpTo.section
+        let targetPageIndex = section.startAnchor?.pageIndex ?? section.pageRange.lowerBound
+        guard let page = nsView.document?.page(at: targetPageIndex) else { return }
 
-        context.coordinator.lastJumpSectionID = jumpTo.id
+        context.coordinator.lastJumpToken = jumpTo.token
         DispatchQueue.main.async {
-            if let anchor = jumpTo.startAnchor {
+            if let anchor = section.startAnchor {
                 let destination = PDFDestination(
                     page: page,
                     at: CGPoint(x: anchor.x, y: anchor.y))
@@ -141,7 +148,7 @@ struct PDFViewerView: NSViewRepresentable {
         var llmProviderFactory: () -> any LLMProvider
         var isHighlightModeEnabled = false
         var loadedDocumentID: UUID?
-        var lastJumpSectionID: UUID?
+        var lastJumpToken: UUID?
         var lastFocusedHighlightToken: UUID?
         var activeFocusedHighlightID: UUID?
         var equationCaptureController: EquationCaptureController?

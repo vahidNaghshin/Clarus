@@ -8,6 +8,25 @@ import WebKit
 /// Sizing: the view auto-sizes to the height of the rendered HTML by
 /// reading `document.body.scrollHeight` from JavaScript after layout.
 /// Pass `fixedHeight` when you already know the height (avoids flash).
+// MARK: - Scroll-forwarding WKWebView
+
+/// `RenderedContentView` is always sized to exactly match its rendered
+/// HTML content's height (via the height-reporting JS bridge above), so
+/// it never needs to scroll internally. However, WKWebView owns its own
+/// internal NSScrollView and — by default — captures scroll-wheel events
+/// rather than letting them bubble up to an enclosing SwiftUI `ScrollView`.
+/// That made long chat replies / notes containing a `MarkdownLatexView`
+/// effectively freeze scrolling (and made trailing UI like "Add to note"
+/// unreachable) whenever the cursor was hovering over the rendered content.
+/// Forwarding scroll-wheel events to the next responder fixes this without
+/// any loss of functionality, since there's no internal scrolling to
+/// preserve.
+final class ScrollForwardingWebView: WKWebView {
+    override func scrollWheel(with event: NSEvent) {
+        nextResponder?.scrollWheel(with: event)
+    }
+}
+
 struct RenderedContentView: NSViewRepresentable {
     let text: String
     var font: RenderedFont = .body
@@ -41,7 +60,7 @@ struct RenderedContentView: NSViewRepresentable {
         let config = WKWebViewConfiguration()
         config.userContentController.add(context.coordinator, name: "heightBridge")
 
-        let webView = WKWebView(frame: .zero, configuration: config)
+        let webView = ScrollForwardingWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
         webView.setValue(false, forKey: "drawsBackground")
         context.coordinator.webView = webView
