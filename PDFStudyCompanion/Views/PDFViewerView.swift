@@ -27,6 +27,11 @@ struct HighlightFocusRequest: Equatable {
 /// so that those incidental updates never cause an unwanted page jump.
 struct SectionJumpRequest: Equatable {
     let section: Section
+    /// When set, jump straight to this page instead of the section's start
+    /// anchor. Used for note/chat references, which should return to the
+    /// exact page the reference was created on rather than the top of its
+    /// (possibly multi-page) section.
+    var pageIndexOverride: Int? = nil
     let token: UUID
 
     static func == (lhs: SectionJumpRequest, rhs: SectionJumpRequest) -> Bool {
@@ -122,12 +127,12 @@ struct PDFViewerView: NSViewRepresentable {
         guard let jumpTo, jumpTo.token != context.coordinator.lastJumpToken else { return }
 
         let section = jumpTo.section
-        let targetPageIndex = section.startAnchor?.pageIndex ?? section.pageRange.lowerBound
+        let targetPageIndex = jumpTo.pageIndexOverride ?? section.startAnchor?.pageIndex ?? section.pageRange.lowerBound
         guard let page = nsView.document?.page(at: targetPageIndex) else { return }
 
         context.coordinator.lastJumpToken = jumpTo.token
         DispatchQueue.main.async {
-            if let anchor = section.startAnchor {
+            if jumpTo.pageIndexOverride == nil, let anchor = section.startAnchor {
                 let destination = PDFDestination(
                     page: page,
                     at: CGPoint(x: anchor.x, y: anchor.y))

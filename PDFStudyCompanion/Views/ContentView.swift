@@ -476,14 +476,14 @@ struct ContentView: View {
         if let sectionID = note.sectionID,
            let matchedSection = document.chapters.flatMap(\.sections).first(where: { $0.id == sectionID }) {
             selectedSection = matchedSection
-            sectionJumpRequest = SectionJumpRequest(section: matchedSection, token: UUID())
+            sectionJumpRequest = SectionJumpRequest(section: matchedSection, pageIndexOverride: note.pageIndex, token: UUID())
             return
         }
 
         if let pageIndex = note.pageIndex,
            let matchedSection = section(for: pageIndex, pagePoint: nil, in: document) {
             selectedSection = matchedSection
-            sectionJumpRequest = SectionJumpRequest(section: matchedSection, token: UUID())
+            sectionJumpRequest = SectionJumpRequest(section: matchedSection, pageIndexOverride: pageIndex, token: UUID())
         }
     }
 
