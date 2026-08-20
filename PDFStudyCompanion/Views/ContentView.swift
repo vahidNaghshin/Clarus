@@ -417,6 +417,17 @@ struct ContentView: View {
         document: PDFDocument,
         fallbackSection: Section
     ) {
+        // Guard against duplicate notes when "Add this to note" is pressed
+        // more than once for the same chat message (e.g. repeated clicks in
+        // the same chat window).
+        if let existingNote = historyStore.notes.first(where: { $0.sourceChatMessageID == message.id }) {
+            if let highlightID = existingNote.highlightID {
+                selectedSection = nil
+                focusedHighlight = HighlightFocusRequest(highlightID: highlightID, token: UUID())
+            }
+            return
+        }
+
         let resolvedSection = reference?.sectionID.flatMap { sectionID in
             document.chapters.flatMap(\.sections).first(where: { $0.id == sectionID })
         } ?? fallbackSection

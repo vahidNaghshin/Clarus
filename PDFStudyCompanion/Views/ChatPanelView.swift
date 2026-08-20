@@ -70,10 +70,12 @@ struct ChatPanelView: View {
                             MarkdownLatexView(text: message.text)
 
                             if message.role == .assistant {
-                                Button("Add this to note") {
+                                let alreadyAddedToNote = historyStore.notes.contains { $0.sourceChatMessageID == message.id }
+                                Button(alreadyAddedToNote ? "Added to note" : "Add this to note") {
                                     onAddAssistantMessageToNote(message, noteReferencesByMessageID[message.id] ?? defaultNoteReference)
                                 }
                                 .buttonStyle(.link)
+                                .disabled(alreadyAddedToNote)
                             }
                         }
                         .padding(10)
