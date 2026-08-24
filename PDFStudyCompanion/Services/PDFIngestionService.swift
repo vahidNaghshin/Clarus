@@ -1,5 +1,6 @@
 import PDFKit
 import Foundation
+import CryptoKit
 
 /// Opens a PDF and turns it into the structured Chapter/Section model
 /// the rest of the app works with. When a PDF does not provide an
@@ -15,10 +16,11 @@ struct PDFIngestionService {
         guard let pdf = PDFKit.PDFDocument(url: fileURL) else {
             throw IngestionError.unreadableDocument
         }
-        let chapters = chapters(for: pdf)
+        let documentKey = fileURL.standardizedFileURL.resolvingSymlinksInPath().path
+        let chapters = chapters(for: pdf, documentKey: documentKey)
 
         return PDFDocument(
-            id: UUID(),
+            id: deterministicID(from: [documentKey, "document"]),
             title: fileURL.deletingPathExtension().lastPathComponent,
             fileURL: fileURL,
             pageCount: pdf.pageCount,
@@ -27,23 +29,41 @@ struct PDFIngestionService {
         )
     }
 
-    private func chapters(for pdf: PDFKit.PDFDocument) -> [Chapter] {
+    /// Derives a stable UUID from content that stays the same every time
+    /// the same PDF is re-ingested (file path plus hierarchical position
+    /// and title), instead of a random `UUID()`. This lets persisted
+    /// history (summaries, questions, notes, highlights) keyed by
+    /// section/chapter/document ID keep matching up after the app or
+    /// document is reopened.
+    private func deterministicID(from components: [String]) -> UUID {
+        let joined = components.joined(separator: "\u{1F}")
+        let digest = SHA256.hash(data: Data(joined.utf8))
+        var bytes = Array(digest.prefix(16))
+        bytes[6] = (bytes[6] & 0x0F) | 0x50
+        bytes[8] = (bytes[8] & 0x3F) | 0x80
+        return UUID(uuid: (bytes[0], bytes[1], bytes[2], bytes[3],
+                            bytes[4], bytes[5], bytes[6], bytes[7],
+                            bytes[8], bytes[9], bytes[10], bytes[11],
+                            bytes[12], bytes[13], bytes[14], bytes[15]))
+    }
+
+    private func chapters(for pdf: PDFKit.PDFDocument, documentKey: String) -> [Chapter] {
         guard let outline = pdf.outlineRoot, outline.numberOfChildren > 0 else {
-            return fallbackChapters(for: pdf)
+            return fallbackChapters(for: pdf, documentKey: documentKey)
         }
 
         let chapters = (0..<outline.numberOfChildren).compactMap { i -> Chapter? in
             guard let node = outline.child(at: i) else { return nil }
-            return chapter(from: node, pdf: pdf)
+            return chapter(from: node, pdf: pdf, documentKey: documentKey, chapterIndex: i)
         }
 
         let normalized = normalizeChapterRanges(chapters, pdf: pdf)
-        return normalized.isEmpty ? fallbackChapters(for: pdf) : normalized
+        return normalized.isEmpty ? fallbackChapters(for: pdf, documentKey: documentKey) : normalized
     }
 
     // MARK: - Outline walking
 
-    private func chapter(from node: PDFOutline, pdf: PDFKit.PDFDocument) -> Chapter? {
+    private func chapter(from node: PDFOutline, pdf: PDFKit.PDFDocument, documentKey: String, chapterIndex: Int) -> Chapter? {
         let title = node.label ?? "Untitled chapter"
         let range = startPageRange(of: node, pdf: pdf)
         let sections: [Section]
@@ -52,7 +72,7 @@ struct PDFIngestionService {
         // the top level with no subsection children. Treat those leaf nodes
         // as actual sections so the sidebar and Study panel still work.
         if node.numberOfChildren == 0 {
-            guard let singleSection = section(from: node, pdf: pdf) else { return nil }
+            guard let singleSection = section(from: node, pdf: pdf, documentKey: documentKey, chapterIndex: chapterIndex, sectionIndex: 0) else { return nil }
             sections = [singleSection]
         } else {
             var collected: [Section] = []
@@ -60,35 +80,37 @@ struct PDFIngestionService {
             // Keep the parent node as its own section entry so text that
             // appears between a section heading and its first subsection
             // is not dropped during ingestion.
-            if let parentSection = section(from: node, pdf: pdf) {
+            if let parentSection = section(from: node, pdf: pdf, documentKey: documentKey, chapterIndex: chapterIndex, sectionIndex: 0) {
                 collected.append(parentSection)
             }
 
             collected.append(contentsOf: (0..<node.numberOfChildren).compactMap { i -> Section? in
                 guard let child = node.child(at: i) else { return nil }
-                return section(from: child, pdf: pdf)
+                return section(from: child, pdf: pdf, documentKey: documentKey, chapterIndex: chapterIndex, sectionIndex: i + 1)
             })
 
             sections = collected
         }
 
-        return Chapter(id: UUID(), title: title, sections: sections, pageRange: range)
+        let chapterID = deterministicID(from: [documentKey, "chapter", String(chapterIndex), title])
+        return Chapter(id: chapterID, title: title, sections: sections, pageRange: range)
     }
 
-    private func section(from node: PDFOutline, pdf: PDFKit.PDFDocument) -> Section? {
+    private func section(from node: PDFOutline, pdf: PDFKit.PDFDocument, documentKey: String, chapterIndex: Int, sectionIndex: Int) -> Section? {
         let title = node.label ?? "Untitled section"
         let range = startPageRange(of: node, pdf: pdf)
         let anchor = anchor(for: node, pdf: pdf)
         let text = extractText(pages: range, pdf: pdf)
-        return Section(id: UUID(), title: title, pageRange: range, startAnchor: anchor, rawText: text)
+        let sectionID = deterministicID(from: [documentKey, "section", String(chapterIndex), String(sectionIndex), title])
+        return Section(id: sectionID, title: title, pageRange: range, startAnchor: anchor, rawText: text)
     }
 
-    private func fallbackChapters(for pdf: PDFKit.PDFDocument) -> [Chapter] {
+    private func fallbackChapters(for pdf: PDFKit.PDFDocument, documentKey: String) -> [Chapter] {
         guard pdf.pageCount > 0 else { return [] }
 
         let sections = (0..<pdf.pageCount).map { pageIndex in
             Section(
-                id: UUID(),
+                id: deterministicID(from: [documentKey, "fallback-section", String(pageIndex)]),
                 title: "Page \(pageIndex + 1)",
                 pageRange: pageIndex...pageIndex,
                 startAnchor: topAnchor(forPageAt: pageIndex, pdf: pdf),
@@ -97,7 +119,7 @@ struct PDFIngestionService {
 
         return [
             Chapter(
-                id: UUID(),
+                id: deterministicID(from: [documentKey, "fallback-chapter"]),
                 title: "Document",
                 sections: sections,
                 pageRange: 0...(pdf.pageCount - 1))
