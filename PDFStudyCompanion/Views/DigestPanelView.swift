@@ -63,9 +63,7 @@ struct DigestPanelView: View {
                                 }
                             }
 
-                            refreshButton(isLoading: isGeneratingQuestions(section)) {
-                                generateQuestions(for: section)
-                            }
+                            questionsFooter(for: section, questions: sectionQuestions)
                         }
                     }
                     .padding()
@@ -162,6 +160,51 @@ struct DigestPanelView: View {
             .buttonStyle(.borderless)
             .font(.caption)
             .disabled(isLoading)
+        }
+    }
+
+    @ViewBuilder
+    private func questionsFooter(for section: Section, questions: [MultipleChoiceQuestion]) -> some View {
+        let isLoading = isGeneratingQuestions(section)
+        HStack {
+            if questions.contains(where: { $0.userAnswerIndex != nil }) {
+                Button {
+                    retakeQuestions(for: section)
+                } label: {
+                    Label("Retake", systemImage: "arrow.counterclockwise")
+                }
+                .buttonStyle(.borderless)
+                .font(.caption)
+                .disabled(isLoading)
+            }
+
+            Spacer()
+
+            Button {
+                generateQuestions(for: section)
+            } label: {
+                Label(isLoading ? "Refreshing…" : "Refresh", systemImage: "arrow.clockwise")
+            }
+            .buttonStyle(.borderless)
+            .font(.caption)
+            .disabled(isLoading)
+        }
+    }
+
+    /// Clears revealed answers for the current question set without
+    /// regenerating new questions, and persists the cleared state so the
+    /// quiz stays "unanswered" after the app or PDF is reopened.
+    private func retakeQuestions(for section: Section) {
+        guard var currentQuestions = questionsBySection[section.id] else { return }
+
+        for index in currentQuestions.indices {
+            currentQuestions[index].userAnswerIndex = nil
+        }
+        questionsBySection[section.id] = currentQuestions
+
+        guard let document else { return }
+        for question in currentQuestions {
+            historyStore.updateQuestionAnswer(document: document, section: section, question: question)
         }
     }
 
