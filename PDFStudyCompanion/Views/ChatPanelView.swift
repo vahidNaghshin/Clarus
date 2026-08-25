@@ -93,9 +93,28 @@ struct ChatPanelView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            HStack {
-                TextField("Ask about this section…", text: $draft)
-                    .textFieldStyle(.roundedBorder)
+            HStack(alignment: .bottom) {
+                ZStack(alignment: .topLeading) {
+                    if draft.isEmpty {
+                        Text("Ask about this section…")
+                            .foregroundStyle(.tertiary)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 8)
+                            .allowsHitTesting(false)
+                    }
+
+                    TextEditor(text: $draft)
+                        .scrollContentBackground(.hidden)
+                        .padding(.horizontal, 1)
+                        .padding(.vertical, 4)
+                }
+                .frame(minHeight: 34, maxHeight: 120)
+                .background(Color(nsColor: .textBackgroundColor))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color(nsColor: .separatorColor))
+                )
+
                 Button(isSending ? "Sending…" : "Send") { send() }
                     .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSending)
             }
