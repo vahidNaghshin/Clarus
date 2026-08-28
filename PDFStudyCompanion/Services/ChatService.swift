@@ -8,7 +8,10 @@ struct ChatService {
     var embeddingStore: EmbeddingStore?
     var documentID: String
 
-    func send(_ userText: String, selection: String?, currentSection: Section) async throws -> String {
+    /// `history` is the chat window's prior messages (oldest first), so
+    /// the model sees earlier turns of this same conversation instead of
+    /// treating every send as a brand-new, memory-less request.
+    func send(_ userText: String, selection: String?, currentSection: Section, history: [ChatMessage] = []) async throws -> String {
         var context: [String] = [currentSection.rawText]
         if let selection { context.insert(selection, at: 0) }
 
@@ -20,7 +23,7 @@ struct ChatService {
             context.append(contentsOf: related)
         }
 
-        return try await llm.generateText(prompt: userText, context: context)
+        return try await llm.generateText(prompt: userText, context: context, images: [], history: history)
     }
 
     /// Cheap heuristic for v1: retrieve only when the question references

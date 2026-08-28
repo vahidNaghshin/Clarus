@@ -12,6 +12,12 @@ protocol LLMProvider {
     /// retrieved passages) — the provider just sends it along.
     func generateText(prompt: String, context: [String]) async throws -> String
     func generateText(prompt: String, context: [String], images: [LLMImageInput]) async throws -> String
+
+    /// `history` is the prior turns of this conversation (oldest first).
+    /// Passing it lets the model see earlier user/assistant turns from
+    /// the same chat window instead of treating every send as a fresh,
+    /// memory-less request.
+    func generateText(prompt: String, context: [String], images: [LLMImageInput], history: [ChatMessage]) async throws -> String
 }
 
 struct LLMImageInput {
@@ -36,11 +42,15 @@ extension LLMProvider {
     var supportsVision: Bool { false }
 
     func generateText(prompt: String, context: [String], images: [LLMImageInput]) async throws -> String {
-        if images.isEmpty {
+        try await generateText(prompt: prompt, context: context, images: images, history: [])
+    }
+
+    func generateText(prompt: String, context: [String], images: [LLMImageInput], history: [ChatMessage]) async throws -> String {
+        if images.isEmpty && history.isEmpty {
             return try await generateText(prompt: prompt, context: context)
         }
 
-        throw LLMProviderError.notImplemented("\(String(describing: Self.self)) does not support image input.")
+        throw LLMProviderError.notImplemented("\(String(describing: Self.self)) does not support image input or conversation history.")
     }
 }
 
@@ -104,10 +114,14 @@ struct BedrockProvider: LLMProvider {
     }
 
     func generateText(prompt: String, context: [String]) async throws -> String {
-        try await generateText(prompt: prompt, context: context, images: [])
+        try await generateText(prompt: prompt, context: context, images: [], history: [])
     }
 
     func generateText(prompt: String, context: [String], images: [LLMImageInput]) async throws -> String {
+        try await generateText(prompt: prompt, context: context, images: images, history: [])
+    }
+
+    func generateText(prompt: String, context: [String], images: [LLMImageInput], history: [ChatMessage]) async throws -> String {
         let requestID = UUID()
         let requestKind: BedrockRequestKind = images.isEmpty ? .text : .visual
 
@@ -128,11 +142,7 @@ struct BedrockProvider: LLMProvider {
                 message: nil))
 
         do {
-            let messages = [
-                BedrockMessage(
-                    role: "user",
-                    content: composeContent(prompt: prompt, context: context, images: images))
-            ]
+            let messages = buildConversationMessages(prompt: prompt, context: context, images: images, history: history)
             let messagesData = try JSONEncoder().encode(messages)
             let messagesJSON = String(decoding: messagesData, as: UTF8.self)
 
@@ -174,6 +184,50 @@ struct BedrockProvider: LLMProvider {
         await MainActor.run {
             NotificationCenter.default.post(name: .bedrockRequestStatusDidChange, object: event)
         }
+    }
+
+    /// Builds the alternating user/assistant turn sequence the Converse
+    /// API expects. Prior turns come from `history` (the chat window's
+    /// existing messages) so the model retains memory of the
+    /// conversation instead of only ever seeing the latest prompt.
+    private func buildConversationMessages(
+        prompt: String,
+        context: [String],
+        images: [LLMImageInput],
+        history: [ChatMessage]
+    ) -> [BedrockMessage] {
+        var turns: [BedrockMessage] = []
+
+        for entry in history {
+            let trimmed = entry.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { continue }
+            let role = entry.role == .user ? "user" : "assistant"
+
+            if let last = turns.last, last.role == role {
+                // The Converse API requires strictly alternating
+                // user/assistant turns; merge same-role runs rather than
+                // sending back-to-back turns with the same role.
+                turns[turns.count - 1] = BedrockMessage(role: role, content: last.content + [BedrockContentBlock(text: trimmed)])
+            } else {
+                turns.append(BedrockMessage(role: role, content: [BedrockContentBlock(text: trimmed)]))
+            }
+        }
+
+        // A conversation must start with a user turn.
+        while let first = turns.first, first.role != "user" {
+            turns.removeFirst()
+        }
+
+        let finalContent = composeContent(prompt: prompt, context: context, images: images)
+        if let last = turns.last, last.role == "user" {
+            // Two consecutive user turns aren't allowed either; fold the
+            // new prompt into the trailing (unanswered) user turn.
+            turns[turns.count - 1] = BedrockMessage(role: "user", content: last.content + finalContent)
+        } else {
+            turns.append(BedrockMessage(role: "user", content: finalContent))
+        }
+
+        return turns
     }
 
     private func composeContent(prompt: String, context: [String], images: [LLMImageInput]) -> [BedrockContentBlock] {

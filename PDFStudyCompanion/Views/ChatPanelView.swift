@@ -139,6 +139,11 @@ struct ChatPanelView: View {
         let prompt = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !prompt.isEmpty else { return }
 
+        // Snapshot the conversation so far *before* appending this new
+        // prompt, so the model receives its own prior replies as memory
+        // rather than seeing the same message twice.
+        let conversationHistory = messages
+
         let userMessage = ChatMessage(
             id: UUID(),
             documentID: document.id,
@@ -160,7 +165,7 @@ struct ChatPanelView: View {
                     llm: llm,
                     embeddingStore: nil,
                     documentID: document.id.uuidString)
-                let reply = try await service.send(prompt, selection: selectedText, currentSection: section)
+                let reply = try await service.send(prompt, selection: selectedText, currentSection: section, history: conversationHistory)
 
                 await MainActor.run {
                     let assistantMessage = ChatMessage(
