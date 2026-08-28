@@ -18,17 +18,16 @@ enum ProcessingStep: String, Equatable {
     case requesting
 }
 
+/// A cropped equation image plus its nearby-text context, ready to be
+/// handed to a chat window. Capturing no longer calls the LLM directly
+/// — the user types their own prompt in the chat sheet that pops up,
+/// so the image is just an attachment waiting to be sent.
 struct EquationCaptureResult {
     var pageIndex: Int
     var pagePoint: CGPoint
     var referenceSegments: [HighlightSegment]
     var imageData: Data
-    var explanation: String
-}
-
-struct EquationExplanationPayload {
-    var imageData: Data
-    var explanation: String
+    var context: [String]
 }
 
 final class EquationCaptureController: NSObject {
@@ -169,14 +168,14 @@ final class EquationCaptureController: NSObject {
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                let payload = try await self.explainEquation(page: located.page, rect: located.rectOnPage)
+                let capture = try self.captureImageAndContext(page: located.page, rect: located.rectOnPage)
                 self.onCaptureResult(
                     EquationCaptureResult(
                         pageIndex: located.pageIndex,
                         pagePoint: CGPoint(x: located.rectOnPage.midX, y: located.rectOnPage.midY),
                         referenceSegments: [HighlightSegment(pageIndex: located.pageIndex, bounds: located.rectOnPage)],
-                        imageData: payload.imageData,
-                        explanation: payload.explanation))
+                        imageData: capture.imageData,
+                        context: capture.context))
                 self.transition(to: .idle)
             } catch {
                 self.failInline(error.localizedDescription)
@@ -206,7 +205,11 @@ final class EquationCaptureController: NSObject {
         }
     }
 
-    func explainEquation(page: PDFPage, rect: CGRect) async throws -> EquationExplanationPayload {
+    /// Renders the cropped region to an image and gathers nearby page/
+    /// section text as context. No LLM call happens here — that only
+    /// happens once the user submits a prompt from the chat window this
+    /// result opens.
+    func captureImageAndContext(page: PDFPage, rect: CGRect) throws -> (imageData: Data, context: [String]) {
         transition(to: .processing(.rendering))
         let imageData = try renderCaptureImage(page: page, rect: rect)
 
@@ -214,22 +217,7 @@ final class EquationCaptureController: NSObject {
         let pageIndex = documentModel.fileURL.isFileURL ? page.document?.index(for: page) ?? 0 : 0
         let context = assembleContext(page: page, rect: rect, pageIndex: pageIndex)
 
-        transition(to: .processing(.requesting))
-        let provider = llmProviderFactory()
-        guard provider.supportsVision else {
-            throw LLMProviderError.notImplemented("The current backend does not support image explanations.")
-        }
-
-        let prompt = """
-        Explain the captured equation. Describe what the equation represents, what each important symbol means, and how the surrounding text says it is derived or used. If the surrounding text does not provide a derivation, say so clearly instead of guessing.
-        """
-
-        let explanation = try await provider.generateText(
-            prompt: prompt,
-            context: context,
-            images: [LLMImageInput(data: imageData, mimeType: "image/png")])
-
-        return EquationExplanationPayload(imageData: imageData, explanation: explanation)
+        return (imageData, context)
     }
 
     func drawOverlay(in dirtyRect: NSRect) {

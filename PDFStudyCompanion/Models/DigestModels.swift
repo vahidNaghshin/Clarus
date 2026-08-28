@@ -37,13 +37,6 @@ struct ChatMessage: Identifiable, Codable {
     enum Role: String, Codable { case user, assistant }
 }
 
-struct EquationChatEvent {
-    var documentID: UUID
-    var sectionID: UUID
-    var message: ChatMessage
-    var noteReference: NoteReferenceContext?
-}
-
 struct NoteReferenceContext {
     var sectionID: UUID?
     var sectionTitle: String?

@@ -1,9 +1,5 @@
 import SwiftUI
 
-extension Notification.Name {
-    static let equationCaptureDidGenerateMessage = Notification.Name("equationCaptureDidGenerateMessage")
-}
-
 /// Minimal chat UI. Context assembly and retrieval gating happen in
 /// ChatService — this view just displays the thread and forwards input.
 struct ChatPanelView: View {
@@ -19,6 +15,8 @@ struct ChatPanelView: View {
     @State private var draft: String = ""
     @State private var errorMessage: String?
     @State private var isSending = false
+    @State private var pendingImage: LLMImageInput?
+    @State private var pendingImageContext: [String]
 
     init(
         document: PDFDocument,
@@ -28,6 +26,8 @@ struct ChatPanelView: View {
         initialMessages: [ChatMessage] = [],
         defaultNoteReference: NoteReferenceContext? = nil,
         initialNoteReferences: [UUID: NoteReferenceContext] = [:],
+        initialPendingImage: LLMImageInput? = nil,
+        initialPendingImageContext: [String] = [],
         onAddAssistantMessageToNote: @escaping (ChatMessage, NoteReferenceContext?) -> Void
     ) {
         self.document = document
@@ -39,10 +39,42 @@ struct ChatPanelView: View {
         self.historyStore = historyStore
         _messages = State(initialValue: initialMessages)
         _noteReferencesByMessageID = State(initialValue: initialNoteReferences)
+        _pendingImage = State(initialValue: initialPendingImage)
+        _pendingImageContext = State(initialValue: initialPendingImageContext)
     }
 
     var body: some View {
         VStack(spacing: 12) {
+            if let pendingImage, let image = NSImage(data: pendingImage.data) {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(nsImage: image)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(maxWidth: 160, maxHeight: 120)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Captured equation")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                        Text("Sent with your next message.")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                        Button("Remove") {
+                            self.pendingImage = nil
+                            self.pendingImageContext = []
+                        }
+                        .buttonStyle(.link)
+                        .font(.footnote)
+                    }
+
+                    Spacer(minLength: 0)
+                }
+                .padding(10)
+                .background(Color.gray.opacity(0.1))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+
             if let selectedText, !selectedText.isEmpty {
                 Text(selectedText)
                     .font(.footnote)
@@ -96,7 +128,7 @@ struct ChatPanelView: View {
             HStack(alignment: .bottom) {
                 ZStack(alignment: .topLeading) {
                     if draft.isEmpty {
-                        Text("Ask about this section…")
+                        Text(pendingImage != nil ? "Ask about this equation…" : "Ask about this section…")
                             .foregroundStyle(.tertiary)
                             .padding(.horizontal, 5)
                             .padding(.vertical, 8)
@@ -122,17 +154,6 @@ struct ChatPanelView: View {
         .padding()
         .frame(minWidth: 560, minHeight: 520)
         .bedrockStatusBanner()
-        .onReceive(NotificationCenter.default.publisher(for: .equationCaptureDidGenerateMessage)) { notification in
-            guard let event = notification.object as? EquationChatEvent,
-                  event.documentID == document.id,
-                  event.sectionID == section.id
-            else { return }
-
-            messages.append(event.message)
-            if let noteReference = event.noteReference {
-                noteReferencesByMessageID[event.message.id] = noteReference
-            }
-        }
     }
 
     private func send() {
@@ -143,6 +164,8 @@ struct ChatPanelView: View {
         // prompt, so the model receives its own prior replies as memory
         // rather than seeing the same message twice.
         let conversationHistory = messages
+        let attachedImage = pendingImage
+        let attachedImageContext = pendingImageContext
 
         let userMessage = ChatMessage(
             id: UUID(),
@@ -150,10 +173,12 @@ struct ChatPanelView: View {
             sectionID: section.id,
             role: .user,
             text: prompt,
-            imageData: nil,
+            imageData: attachedImage?.data,
             timestamp: Date())
         messages.append(userMessage)
         historyStore.addChatMessage(document: document, section: section, role: .user, text: prompt, selectedText: selectedText)
+        pendingImage = nil
+        pendingImageContext = []
         errorMessage = nil
         isSending = true
         draft = ""
@@ -165,7 +190,13 @@ struct ChatPanelView: View {
                     llm: llm,
                     embeddingStore: nil,
                     documentID: document.id.uuidString)
-                let reply = try await service.send(prompt, selection: selectedText, currentSection: section, history: conversationHistory)
+                let reply = try await service.send(
+                    prompt,
+                    selection: selectedText,
+                    currentSection: section,
+                    history: conversationHistory,
+                    extraContext: attachedImageContext,
+                    images: attachedImage.map { [$0] } ?? [])
 
                 await MainActor.run {
                     let assistantMessage = ChatMessage(

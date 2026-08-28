@@ -8,6 +8,8 @@ private struct ChatSheetContext: Identifiable {
     let initialMessages: [ChatMessage]
     let defaultNoteReference: NoteReferenceContext?
     let initialNoteReferences: [UUID: NoteReferenceContext]
+    var pendingImage: LLMImageInput? = nil
+    var pendingImageContext: [String] = []
 }
 
 private struct NoteDraftContext: Identifiable {
@@ -188,6 +190,8 @@ struct ContentView: View {
                 initialMessages: context.initialMessages,
                 defaultNoteReference: context.defaultNoteReference,
                 initialNoteReferences: context.initialNoteReferences,
+                initialPendingImage: context.pendingImage,
+                initialPendingImageContext: context.pendingImageContext,
                 onAddAssistantMessageToNote: { message, noteReference in
                     addAssistantMessageToNote(
                         message,
@@ -354,41 +358,19 @@ struct ContentView: View {
         selectedPageIndex = result.pageIndex
         selectedReferenceSegments = result.referenceSegments
 
-        let assistantMessage = ChatMessage(
-            id: UUID(),
-            documentID: document.id,
-            sectionID: matchedSection.id,
-            role: .assistant,
-            text: result.explanation,
-            imageData: result.imageData,
-            timestamp: Date())
-
-        historyStore.addChatMessage(
+        // Pop up a fresh chat window with the cropped equation attached
+        // instead of sending it to the vision model right away — the user
+        // types their own question, and the image goes out with their
+        // first prompt.
+        chatSheetContext = ChatSheetContext(
             document: document,
             section: matchedSection,
-            role: .assistant,
-            text: result.explanation,
-            selectedText: "Equation capture")
-
-        if let chatSheetContext,
-           chatSheetContext.document.id == document.id,
-           chatSheetContext.section.id == matchedSection.id {
-            NotificationCenter.default.post(
-                name: .equationCaptureDidGenerateMessage,
-                object: EquationChatEvent(
-                    documentID: document.id,
-                    sectionID: matchedSection.id,
-                    message: assistantMessage,
-                    noteReference: noteReference))
-        } else {
-            self.chatSheetContext = ChatSheetContext(
-                document: document,
-                section: matchedSection,
-                selectedText: nil,
-                initialMessages: [assistantMessage],
-                defaultNoteReference: nil,
-                initialNoteReferences: [assistantMessage.id: noteReference].compactMapValues { $0 })
-        }
+            selectedText: nil,
+            initialMessages: [],
+            defaultNoteReference: noteReference,
+            initialNoteReferences: [:],
+            pendingImage: LLMImageInput(data: result.imageData, mimeType: "image/png"),
+            pendingImageContext: result.context)
     }
 
     private func noteReferenceContext(

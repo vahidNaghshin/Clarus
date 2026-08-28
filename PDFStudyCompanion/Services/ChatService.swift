@@ -11,9 +11,20 @@ struct ChatService {
     /// `history` is the chat window's prior messages (oldest first), so
     /// the model sees earlier turns of this same conversation instead of
     /// treating every send as a brand-new, memory-less request.
-    func send(_ userText: String, selection: String?, currentSection: Section, history: [ChatMessage] = []) async throws -> String {
+    /// `extraContext` and `images` carry one-off attachments (e.g. a
+    /// cropped equation image and its nearby-text context) that should
+    /// go out with this particular prompt.
+    func send(
+        _ userText: String,
+        selection: String?,
+        currentSection: Section,
+        history: [ChatMessage] = [],
+        extraContext: [String] = [],
+        images: [LLMImageInput] = []
+    ) async throws -> String {
         var context: [String] = [currentSection.rawText]
         if let selection { context.insert(selection, at: 0) }
+        context.append(contentsOf: extraContext)
 
         if shouldRetrieve(for: userText),
            let embeddingStore,
@@ -23,7 +34,7 @@ struct ChatService {
             context.append(contentsOf: related)
         }
 
-        return try await llm.generateText(prompt: userText, context: context, images: [], history: history)
+        return try await llm.generateText(prompt: userText, context: context, images: images, history: history)
     }
 
     /// Cheap heuristic for v1: retrieve only when the question references
