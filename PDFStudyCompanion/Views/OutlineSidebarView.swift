@@ -75,16 +75,13 @@ struct OutlineSidebarView: View {
             }
         }
         .navigationTitle("Contents")
-        .onAppear {
-            expandAllChapters()
-        }
         .onChange(of: document?.id) { _, _ in
-            expandAllChapters()
+            collapseAllChapters()
         }
     }
 
-    private func expandAllChapters() {
-        expandedChapterIDs = Set(document?.chapters.map(\.id) ?? [])
+    private func collapseAllChapters() {
+        expandedChapterIDs = []
     }
 
     private func pageLabel(for range: ClosedRange<Int>) -> String {
