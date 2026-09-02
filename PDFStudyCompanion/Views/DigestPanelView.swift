@@ -38,8 +38,12 @@ struct DigestPanelView: View {
 
                         if let summaryText = summaryText(for: section) {
                             VStack(alignment: .leading, spacing: 8) {
-                                Text(summaryText)
-                                    .foregroundStyle(.secondary)
+                                if let renderedSummary = summariesBySection[section.id] {
+                                    MarkdownLatexView(text: renderedSummary)
+                                } else {
+                                    Text(summaryText)
+                                        .foregroundStyle(.secondary)
+                                }
 
                                 if summariesBySection[section.id] != nil {
                                     refreshButton(isLoading: isSummarizing(section)) {
