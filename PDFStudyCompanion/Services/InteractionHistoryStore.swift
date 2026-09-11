@@ -62,7 +62,8 @@ final class InteractionHistoryStore: ObservableObject {
                 relatedQuestionID: nil,
                 options: nil,
                 selectedAnswerIndex: nil,
-                correctAnswerIndex: nil))
+                correctAnswerIndex: nil,
+                structuralReviewItems: nil))
     }
 
     func addChatMessage(document: PDFDocument, section: Section, role: ChatMessage.Role, text: String, selectedText: String?) {
@@ -80,7 +81,26 @@ final class InteractionHistoryStore: ObservableObject {
                 relatedQuestionID: nil,
                 options: nil,
                 selectedAnswerIndex: nil,
-                correctAnswerIndex: nil))
+                correctAnswerIndex: nil,
+                structuralReviewItems: nil))
+    }
+
+    func addStructuralReview(document: PDFDocument, section: Section, review: StructuralReview) {
+        append(
+            InteractionRecord(
+                id: UUID(),
+                documentKey: documentKey(for: document),
+                sectionID: section.id,
+                sectionTitle: section.title,
+                kind: .structuralReview,
+                title: "Structural review for \(section.title)",
+                body: "Generated \(review.items.count) Socratic prompts.",
+                createdAt: review.generatedAt,
+                relatedQuestionID: nil,
+                options: nil,
+                selectedAnswerIndex: nil,
+                correctAnswerIndex: nil,
+                structuralReviewItems: review.items))
     }
 
     func addQuestions(document: PDFDocument, section: Section, questions: [MultipleChoiceQuestion]) {
@@ -183,6 +203,7 @@ final class InteractionHistoryStore: ObservableObject {
             existing[index].options = question.options
             existing[index].selectedAnswerIndex = question.userAnswerIndex
             existing[index].correctAnswerIndex = question.correctIndex
+            existing[index].structuralReviewItems = nil
         } else {
             existing.insert(
                 InteractionRecord(
@@ -197,7 +218,8 @@ final class InteractionHistoryStore: ObservableObject {
                     relatedQuestionID: question.id,
                     options: question.options,
                     selectedAnswerIndex: question.userAnswerIndex,
-                    correctAnswerIndex: question.correctIndex),
+                    correctAnswerIndex: question.correctIndex,
+                    structuralReviewItems: nil),
                 at: 0)
         }
 

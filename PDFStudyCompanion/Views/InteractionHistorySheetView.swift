@@ -12,7 +12,7 @@ struct InteractionHistorySheetView: View {
                     ContentUnavailableView(
                         "No History Yet",
                         systemImage: "clock.arrow.circlepath",
-                        description: Text("Summaries, chats, and answered questions for this PDF will appear here."))
+                        description: Text("Summaries, structural reviews, chats, and answered questions for this PDF will appear here."))
                 } else {
                     List(historyStore.records) { record in
                         InteractionHistoryRow(record: record)
@@ -50,9 +50,11 @@ private struct InteractionHistoryRow: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
 
-            Text(record.body)
-                .font(.body)
-                .textSelection(.enabled)
+            if !record.body.isEmpty {
+                Text(record.body)
+                    .font(.body)
+                    .textSelection(.enabled)
+            }
 
             if record.kind == .question,
                let options = record.options,
@@ -65,6 +67,26 @@ private struct InteractionHistoryRow: View {
                     }
                 }
                 .font(.footnote)
+            }
+
+            if record.kind == .structuralReview,
+               let items = record.structuralReviewItems,
+               !items.isEmpty
+            {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("\(index + 1). \(item.title)")
+                                .font(.subheadline.weight(.semibold))
+                            Text(item.hint)
+                            ForEach(Array(item.questions.enumerated()), id: \.offset) { questionIndex, question in
+                                Text("\(questionIndex + 1). \(question)")
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
             }
         }
         .padding(.vertical, 6)
@@ -80,6 +102,8 @@ private struct InteractionHistoryRow: View {
             return "bubble.left.and.text.bubble.right"
         case .question:
             return "checklist"
+        case .structuralReview:
+            return "list.bullet.rectangle.portrait"
         }
     }
 

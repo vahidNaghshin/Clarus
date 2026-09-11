@@ -25,6 +25,20 @@ struct MultipleChoiceQuestion: Identifiable, Codable {
     var userAnswerIndex: Int?
 }
 
+struct StructuralReview: Identifiable, Codable {
+    let id: UUID
+    var scopeID: UUID
+    var items: [StructuralReviewItem]
+    var generatedAt: Date
+}
+
+struct StructuralReviewItem: Identifiable, Codable {
+    let id: UUID
+    var title: String
+    var hint: String
+    var questions: [String]
+}
+
 struct ChatMessage: Identifiable, Codable {
     let id: UUID
     var documentID: UUID
@@ -81,6 +95,7 @@ enum InteractionKind: String, Codable {
     case chatPrompt
     case chatReply
     case question
+    case structuralReview
 }
 
 struct InteractionRecord: Identifiable, Codable {
@@ -96,4 +111,5 @@ struct InteractionRecord: Identifiable, Codable {
     var options: [String]?
     var selectedAnswerIndex: Int?
     var correctAnswerIndex: Int?
+    var structuralReviewItems: [StructuralReviewItem]?
 }

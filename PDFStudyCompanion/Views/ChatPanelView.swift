@@ -100,6 +100,7 @@ struct ChatPanelView: View {
                             }
 
                             MarkdownLatexView(text: message.text)
+                                .frame(maxWidth: .infinity, alignment: .leading)
 
                             if message.role == .assistant {
                                 let alreadyAddedToNote = historyStore.notes.contains { $0.sourceChatMessageID == message.id }
@@ -110,11 +111,13 @@ struct ChatPanelView: View {
                                 .disabled(alreadyAddedToNote)
                             }
                         }
+                        .frame(maxWidth: min(920, (NSScreen.main?.visibleFrame.width ?? 1200) * 0.7), alignment: .leading)
                         .padding(10)
                         .background(message.role == .user ? Color.accentColor.opacity(0.15) : Color.gray.opacity(0.15))
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                         if message.role == .user { Spacer(minLength: 0) }
                     }
+                    .frame(maxWidth: .infinity)
                 }
             }
 
@@ -152,7 +155,7 @@ struct ChatPanelView: View {
             }
         }
         .padding()
-        .frame(minWidth: 560, minHeight: 520)
+        .frame(minWidth: 780, idealWidth: 980, maxWidth: 1280, minHeight: 520, idealHeight: 680)
         .bedrockStatusBanner()
     }
 

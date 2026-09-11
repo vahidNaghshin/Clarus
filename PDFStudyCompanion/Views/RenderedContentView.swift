@@ -102,6 +102,7 @@ struct RenderedContentView: NSViewRepresentable {
         <style>
         \(katexCSSContent)
           * { box-sizing: border-box; margin: 0; padding: 0; }
+          html, body, #content { width: 100%; max-width: 100%; }
           body {
             font-family: -apple-system, 'Helvetica Neue', sans-serif;
             font-size: \(font.sizePx)px;
@@ -110,6 +111,8 @@ struct RenderedContentView: NSViewRepresentable {
             background: \(bg);
             padding: 4px 2px;
             word-wrap: break-word;
+            overflow-wrap: anywhere;
+            word-break: break-word;
           }
           h1 { font-size: 1.45em; margin: 12px 0 6px; }
           h2 { font-size: 1.25em; margin: 10px 0 5px; }
@@ -129,6 +132,8 @@ struct RenderedContentView: NSViewRepresentable {
             display: block;
             padding: 10px 12px;
             overflow-x: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
             border-radius: 6px;
           }
           blockquote {
@@ -167,11 +172,35 @@ struct RenderedContentView: NSViewRepresentable {
         });
 
         // Report rendered height back to Swift
+        var lastReportedHeight = 0;
         function reportHeight() {
-          var h = document.body.scrollHeight;
+          var h = Math.max(
+            document.body.scrollHeight,
+            document.documentElement.scrollHeight,
+            document.getElementById('content').scrollHeight
+          );
+
+          // Ignore tiny jitter to avoid message spam while still reacting
+          // to real relayout changes (window resize, KaTeX layout, etc).
+          if (Math.abs(h - lastReportedHeight) < 1) {
+            return;
+          }
+          lastReportedHeight = h;
           window.webkit.messageHandlers.heightBridge.postMessage(h);
         }
+
+        // Keep height in sync as layout evolves.
+        window.addEventListener('resize', reportHeight);
+        if (typeof ResizeObserver !== 'undefined') {
+          var observer = new ResizeObserver(reportHeight);
+          observer.observe(document.body);
+          observer.observe(document.getElementById('content'));
+        }
+
         window.onload = reportHeight;
+        requestAnimationFrame(reportHeight);
+        setTimeout(reportHeight, 16);
+        setTimeout(reportHeight, 100);
         setTimeout(reportHeight, 200);
         </script>
         </body>

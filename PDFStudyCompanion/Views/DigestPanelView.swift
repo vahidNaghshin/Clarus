@@ -13,9 +13,11 @@ struct DigestPanelView: View {
     @ObservedObject var historyStore: InteractionHistoryStore
     @State private var summariesBySection: [UUID: String] = [:]
     @State private var questionsBySection: [UUID: [MultipleChoiceQuestion]] = [:]
+    @State private var structuralReviewsBySection: [UUID: [StructuralReviewItem]] = [:]
     @State private var errorsBySection: [UUID: String] = [:]
     @State private var summarizingSectionIDs: Set<UUID> = []
     @State private var generatingQuestionsSectionIDs: Set<UUID> = []
+    @State private var generatingStructuralReviewSectionIDs: Set<UUID> = []
 
     var body: some View {
         Group {
@@ -27,6 +29,11 @@ struct DigestPanelView: View {
                         HStack {
                             Button(isSummarizing(section) ? "Summarizing…" : "Summarize This Section") {
                                 summarize(section)
+                            }
+                            .disabled(isBusy(section) || !hasReadableText(section))
+
+                            Button(isGeneratingStructuralReview(section) ? "Building…" : "Structural review") {
+                                generateStructuralReview(for: section)
                             }
                             .disabled(isBusy(section) || !hasReadableText(section))
 
@@ -48,6 +55,27 @@ struct DigestPanelView: View {
                                 if summariesBySection[section.id] != nil {
                                     refreshButton(isLoading: isSummarizing(section)) {
                                         summarize(section)
+                                    }
+                                }
+                            }
+                        }
+
+                        let structuralReviewItems = structuralReviewsBySection[section.id] ?? []
+                        if !structuralReviewItems.isEmpty || isGeneratingStructuralReview(section) {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Text("Structural Review")
+                                    .font(.headline)
+
+                                if structuralReviewItems.isEmpty {
+                                    Text("Building guided reconstruction prompts…")
+                                        .foregroundStyle(.secondary)
+                                } else {
+                                    ForEach(Array(structuralReviewItems.enumerated()), id: \.element.id) { index, item in
+                                        StructuralReviewCard(index: index + 1, item: item)
+                                    }
+
+                                    refreshButton(isLoading: isGeneratingStructuralReview(section)) {
+                                        generateStructuralReview(for: section)
                                     }
                                 }
                             }
@@ -150,8 +178,20 @@ struct DigestPanelView: View {
             questionsBySectionID[sectionID]?.reverse()
         }
 
+        var structuralReviews: [UUID: [StructuralReviewItem]] = [:]
+        for record in historyStore.records where record.kind == .structuralReview {
+            guard let sectionID = record.sectionID,
+                  structuralReviews[sectionID] == nil,
+                  let items = record.structuralReviewItems,
+                  !items.isEmpty
+            else { continue }
+
+            structuralReviews[sectionID] = items
+        }
+
         summariesBySection = summaries
         questionsBySection = questionsBySectionID
+        structuralReviewsBySection = structuralReviews
     }
 
     @ViewBuilder
@@ -220,8 +260,12 @@ struct DigestPanelView: View {
         generatingQuestionsSectionIDs.contains(section.id)
     }
 
+    private func isGeneratingStructuralReview(_ section: Section) -> Bool {
+        generatingStructuralReviewSectionIDs.contains(section.id)
+    }
+
     private func isBusy(_ section: Section) -> Bool {
-        isSummarizing(section) || isGeneratingQuestions(section)
+        isSummarizing(section) || isGeneratingQuestions(section) || isGeneratingStructuralReview(section)
     }
 
     private func questionsBinding(for section: Section) -> Binding<[MultipleChoiceQuestion]> {
@@ -300,6 +344,58 @@ struct DigestPanelView: View {
                 }
             }
         }
+    }
+
+    private func generateStructuralReview(for section: Section) {
+        guard hasReadableText(section) else { return }
+
+        errorsBySection[section.id] = nil
+        generatingStructuralReviewSectionIDs.insert(section.id)
+
+        Task {
+            do {
+                let llm = BedrockProvider.configured()
+                let reproducer = section_reproducer(llm: llm)
+                let review = try await reproducer.generateReview(for: section)
+
+                await MainActor.run {
+                    structuralReviewsBySection[section.id] = review.items
+                    if let document {
+                        historyStore.addStructuralReview(document: document, section: section, review: review)
+                    }
+                    generatingStructuralReviewSectionIDs.remove(section.id)
+                }
+            } catch {
+                await MainActor.run {
+                    errorsBySection[section.id] = error.localizedDescription
+                    generatingStructuralReviewSectionIDs.remove(section.id)
+                }
+            }
+        }
+    }
+}
+
+private struct StructuralReviewCard: View {
+    let index: Int
+    let item: StructuralReviewItem
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("\(index). \(item.title)")
+                .font(.subheadline.weight(.semibold))
+
+            Text(item.hint)
+                .foregroundStyle(.secondary)
+
+            ForEach(Array(item.questions.enumerated()), id: \.offset) { questionIndex, question in
+                Text("\(questionIndex + 1). \(question)")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.secondary.opacity(0.08))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 }
 
