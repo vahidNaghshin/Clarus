@@ -179,7 +179,7 @@ struct ChatPanelView: View {
             imageData: attachedImage?.data,
             timestamp: Date())
         messages.append(userMessage)
-        historyStore.addChatMessage(document: document, section: section, role: .user, text: prompt, selectedText: selectedText)
+        historyStore.addChatMessage(document: document, section: section, role: .user, text: prompt, selectedText: selectedText, imageData: attachedImage?.data)
         pendingImage = nil
         pendingImageContext = []
         errorMessage = nil

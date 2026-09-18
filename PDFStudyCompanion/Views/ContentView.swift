@@ -82,7 +82,7 @@ struct ContentView: View {
                                     document: document,
                                     section: matchedSection,
                                     selectedText: event.selectedText,
-                                    initialMessages: [],
+                                    initialMessages: historyStore.chatHistory(document: document, section: matchedSection),
                                     defaultNoteReference: noteReference,
                                     initialNoteReferences: [:])
                             }
@@ -172,7 +172,7 @@ struct ContentView: View {
                         document: document,
                         section: selectedSection,
                         selectedText: selectedText,
-                        initialMessages: [],
+                        initialMessages: historyStore.chatHistory(document: document, section: selectedSection),
                         defaultNoteReference: noteReference,
                         initialNoteReferences: [:])
                 } label: {
@@ -366,7 +366,7 @@ struct ContentView: View {
             document: document,
             section: matchedSection,
             selectedText: nil,
-            initialMessages: [],
+            initialMessages: historyStore.chatHistory(document: document, section: matchedSection),
             defaultNoteReference: noteReference,
             initialNoteReferences: [:],
             pendingImage: LLMImageInput(data: result.imageData, mimeType: "image/png"),
