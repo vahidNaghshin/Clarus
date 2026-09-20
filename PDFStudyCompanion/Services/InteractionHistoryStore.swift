@@ -6,7 +6,6 @@ final class InteractionHistoryStore: ObservableObject {
     @Published private(set) var records: [InteractionRecord] = []
     @Published private(set) var notes: [Note] = []
     @Published private(set) var highlights: [PersistedHighlight] = []
-    @Published private(set) var chatMessages: [ChatMessage] = []
 
     private let fileManager: FileManager
     private let rootDirectoryURL: URL
@@ -16,7 +15,6 @@ final class InteractionHistoryStore: ObservableObject {
         var records: [InteractionRecord]
         var notes: [Note]
         var highlights: [PersistedHighlight]
-        var chatMessages: [ChatMessage]
     }
 
     init(fileManager: FileManager = .default) {
@@ -38,7 +36,6 @@ final class InteractionHistoryStore: ObservableObject {
             records = []
             notes = []
             highlights = []
-            chatMessages = []
             return
         }
 
@@ -49,7 +46,6 @@ final class InteractionHistoryStore: ObservableObject {
         records = payload.records.sorted { $0.createdAt > $1.createdAt }
         notes = payload.notes.sorted { $0.createdAt > $1.createdAt }
         highlights = payload.highlights.sorted { $0.createdAt > $1.createdAt }
-        chatMessages = payload.chatMessages.sorted { $0.timestamp < $1.timestamp }
     }
 
     func addSummary(document: PDFDocument, section: Section, summary: Summary) {
@@ -70,17 +66,7 @@ final class InteractionHistoryStore: ObservableObject {
                 structuralReviewItems: nil))
     }
 
-    func addChatMessage(document: PDFDocument, section: Section, role: ChatMessage.Role, text: String, selectedText: String?, imageData: Data? = nil) {
-        let message = ChatMessage(
-            id: UUID(),
-            documentID: document.id,
-            sectionID: section.id,
-            role: role,
-            text: text,
-            imageData: imageData,
-            timestamp: Date())
-        appendChatMessage(message, documentKey: documentKey(for: document))
-
+    func addChatMessage(document: PDFDocument, section: Section, role: ChatMessage.Role, text: String, selectedText: String?) {
         let prefix = selectedText.flatMap { $0.isEmpty ? nil : "Selection: \($0)\n\n" } ?? ""
         append(
             InteractionRecord(
@@ -97,19 +83,6 @@ final class InteractionHistoryStore: ObservableObject {
                 selectedAnswerIndex: nil,
                 correctAnswerIndex: nil,
                 structuralReviewItems: nil))
-    }
-
-    func chatHistory(document: PDFDocument, section: Section) -> [ChatMessage] {
-        let documentKey = documentKey(for: document)
-
-        let sourceMessages: [ChatMessage]
-        if currentDocumentKey == documentKey {
-            sourceMessages = chatMessages
-        } else {
-            sourceMessages = loadPayload(for: documentKey).chatMessages.sorted { $0.timestamp < $1.timestamp }
-        }
-
-        return sourceMessages.filter { $0.sectionID == section.id }
     }
 
     func addStructuralReview(document: PDFDocument, section: Section, review: StructuralReview) {
@@ -264,13 +237,12 @@ final class InteractionHistoryStore: ObservableObject {
         records = payload.records.sorted { $0.createdAt > $1.createdAt }
         notes = payload.notes.sorted { $0.createdAt > $1.createdAt }
         highlights = payload.highlights.sorted { $0.createdAt > $1.createdAt }
-        chatMessages = payload.chatMessages.sorted { $0.timestamp < $1.timestamp }
     }
 
     private func loadPayload(for documentKey: String) -> InteractionHistoryPayload {
         let fileURL = storageFileURL(for: documentKey)
         guard let data = try? Data(contentsOf: fileURL) else {
-            return InteractionHistoryPayload(records: [], notes: [], highlights: [], chatMessages: [])
+            return InteractionHistoryPayload(records: [], notes: [], highlights: [])
         }
 
         if let decoded = try? JSONDecoder().decode(InteractionHistoryPayload.self, from: data) {
@@ -287,31 +259,20 @@ final class InteractionHistoryStore: ObservableObject {
             return InteractionHistoryPayload(
                 records: legacyPayload.records,
                 notes: legacyPayload.notes,
-                highlights: legacyPayload.highlights,
-                chatMessages: [])
+                highlights: legacyPayload.highlights)
         }
 
         if let legacyRecords = try? JSONDecoder().decode([InteractionRecord].self, from: data) {
-            return InteractionHistoryPayload(records: legacyRecords, notes: [], highlights: [], chatMessages: [])
+            return InteractionHistoryPayload(records: legacyRecords, notes: [], highlights: [])
         }
 
-        return InteractionHistoryPayload(records: [], notes: [], highlights: [], chatMessages: [])
+        return InteractionHistoryPayload(records: [], notes: [], highlights: [])
     }
 
     private func save(_ payload: InteractionHistoryPayload, for documentKey: String) {
         let fileURL = storageFileURL(for: documentKey)
         guard let data = try? JSONEncoder().encode(payload) else { return }
         try? data.write(to: fileURL, options: .atomic)
-    }
-
-    private func appendChatMessage(_ message: ChatMessage, documentKey: String) {
-        if currentDocumentKey == documentKey {
-            chatMessages.append(message)
-        }
-
-        var payload = loadPayload(for: documentKey)
-        payload.chatMessages.append(message)
-        save(payload, for: documentKey)
     }
 
     private func documentKey(for document: PDFDocument) -> String {

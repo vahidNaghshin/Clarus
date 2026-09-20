@@ -123,10 +123,11 @@ struct BedrockProvider: LLMProvider {
 
     func generateText(prompt: String, context: [String], images: [LLMImageInput], history: [ChatMessage]) async throws -> String {
         let requestID = UUID()
-        let requestKind: BedrockRequestKind = images.isEmpty ? .text : .visual
+        let conversationIncludesImages = !images.isEmpty || history.contains { $0.imageData != nil }
+        let requestKind: BedrockRequestKind = conversationIncludesImages ? .visual : .text
 
         let selectedModelID: String
-        if images.isEmpty {
+        if !conversationIncludesImages {
             selectedModelID = modelID
         } else if let visionModelID {
             selectedModelID = visionModelID
@@ -200,16 +201,17 @@ struct BedrockProvider: LLMProvider {
 
         for entry in history {
             let trimmed = entry.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { continue }
             let role = entry.role == .user ? "user" : "assistant"
+            let content = composeHistoryContent(for: entry, trimmedText: trimmed)
+            guard !content.isEmpty else { continue }
 
             if let last = turns.last, last.role == role {
                 // The Converse API requires strictly alternating
                 // user/assistant turns; merge same-role runs rather than
                 // sending back-to-back turns with the same role.
-                turns[turns.count - 1] = BedrockMessage(role: role, content: last.content + [BedrockContentBlock(text: trimmed)])
+                turns[turns.count - 1] = BedrockMessage(role: role, content: last.content + content)
             } else {
-                turns.append(BedrockMessage(role: role, content: [BedrockContentBlock(text: trimmed)]))
+                turns.append(BedrockMessage(role: role, content: content))
             }
         }
 
@@ -235,14 +237,30 @@ struct BedrockProvider: LLMProvider {
             .init(text: composeUserMessage(prompt: prompt, context: context))
         ]
 
-        content.append(contentsOf: images.map { image in
-            BedrockContentBlock(
-                image: BedrockImage(
-                    format: image.bedrockFormat,
-                    source: BedrockImageSource(bytes: image.data.base64EncodedString())))
-        })
+        content.append(contentsOf: images.map(makeImageContentBlock))
 
         return content
+    }
+
+    private func composeHistoryContent(for message: ChatMessage, trimmedText: String) -> [BedrockContentBlock] {
+        var content: [BedrockContentBlock] = []
+
+        if !trimmedText.isEmpty {
+            content.append(.init(text: trimmedText))
+        }
+
+        if let imageData = message.imageData {
+            content.append(makeImageContentBlock(LLMImageInput(data: imageData, mimeType: "image/png")))
+        }
+
+        return content
+    }
+
+    private func makeImageContentBlock(_ image: LLMImageInput) -> BedrockContentBlock {
+        BedrockContentBlock(
+            image: BedrockImage(
+                format: image.bedrockFormat,
+                source: BedrockImageSource(bytes: image.data.base64EncodedString())))
     }
 
     private func composeUserMessage(prompt: String, context: [String]) -> String {
