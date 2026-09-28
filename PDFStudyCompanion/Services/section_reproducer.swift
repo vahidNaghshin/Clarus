@@ -6,17 +6,25 @@ import Foundation
 struct SectionReproducer {
     var llm: LLMProvider
 
-    func generateReview(for section: Section) async throws -> StructuralReview {
+    func generateReview(for section: Section) async throws -> StructuralReviewGeneration {
         let storyMap = parse(section)
         let prompt = buildPrompt(for: section, storyMap: storyMap)
         let raw = try await llm.generateText(prompt: prompt, context: [section.rawText])
-        let items = try decodeItems(from: raw)
+        do {
+            let items = try decodeItems(from: raw)
 
-        return StructuralReview(
-            id: UUID(),
-            scopeID: section.id,
-            items: items,
-            generatedAt: Date())
+            return StructuralReviewGeneration(
+                review: StructuralReview(
+                    id: UUID(),
+                    scopeID: section.id,
+                    items: items,
+                    generatedAt: Date()),
+                rawResponse: raw)
+        } catch {
+            throw StructuralReviewError.invalidResponse(
+                message: error.localizedDescription,
+                rawResponse: raw)
+        }
     }
 
     private func parse(_ section: Section) -> StoryMap {
@@ -164,8 +172,18 @@ struct SectionReproducer {
     }
 
     private func decodeItems(from raw: String) throws -> [StructuralReviewItem] {
-        let payload = try extractJSONPayload(from: raw)
-        let items = try normalizeItems(from: payload)
+        let items: [StructuralReviewItem]
+
+        do {
+            let payload = try extractJSONPayload(from: raw)
+            items = try normalizeItems(from: payload)
+        } catch {
+            let salvagedItems = salvageItems(from: raw)
+            guard !salvagedItems.isEmpty else {
+                throw error
+            }
+            items = salvagedItems
+        }
 
         guard !items.isEmpty else {
             throw LLMProviderError.invalidResponse("Structural review response did not include any usable checkpoints.")
@@ -252,23 +270,10 @@ struct SectionReproducer {
     }
 
     private func normalizeItems(from payload: Any) throws -> [StructuralReviewItem] {
-        let itemPayloads: [[String: Any]]
-
-        if let array = payload as? [[String: Any]] {
-            itemPayloads = array
-        } else if let object = payload as? [String: Any] {
-            if let array = object["checkpoints"] as? [[String: Any]] {
-                itemPayloads = array
-            } else if let array = object["items"] as? [[String: Any]] {
-                itemPayloads = array
-            } else if let array = object["structural_review"] as? [[String: Any]] {
-                itemPayloads = array
-            } else if let array = object["review"] as? [[String: Any]] {
-                itemPayloads = array
-            } else {
+        guard let itemPayloads = extractCheckpointList(from: payload) else {
+            if payload is [String: Any] || payload is [Any] {
                 throw LLMProviderError.invalidResponse("Structural review response JSON did not contain a checkpoint list.")
             }
-        } else {
             throw LLMProviderError.invalidResponse("Structural review response JSON had an unsupported top-level format.")
         }
 
@@ -320,6 +325,165 @@ struct SectionReproducer {
         }
 
         return nil
+    }
+
+    private func extractCheckpointList(from payload: Any) -> [[String: Any]]? {
+        if let dictionary = payload as? [String: Any] {
+            if looksLikeCheckpoint(dictionary) {
+                return [dictionary]
+            }
+
+            let preferredKeys = [
+                "checkpoints",
+                "checkpoint_list",
+                "checkpointList",
+                "items",
+                "structural_review",
+                "review",
+                "response",
+                "result",
+                "data"
+            ]
+
+            for key in preferredKeys {
+                if let value = dictionary[key], let nested = extractCheckpointList(from: value) {
+                    return nested
+                }
+            }
+
+            for value in dictionary.values {
+                if let nested = extractCheckpointList(from: value) {
+                    return nested
+                }
+            }
+
+            return nil
+        }
+
+        if let objects = payload as? [[String: Any]], objects.contains(where: looksLikeCheckpoint) {
+            return objects
+        }
+
+        if let array = payload as? [Any] {
+            let objects = array.compactMap { $0 as? [String: Any] }
+            if objects.count == array.count, objects.contains(where: looksLikeCheckpoint) {
+                return objects
+            }
+
+            for value in array {
+                if let nested = extractCheckpointList(from: value) {
+                    return nested
+                }
+            }
+        }
+
+        return nil
+    }
+
+    private func salvageItems(from raw: String) -> [StructuralReviewItem] {
+        let candidate = unwrapCodeFence(from: raw.trimmingCharacters(in: .whitespacesAndNewlines))
+            ?? raw.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        var seen = Set<String>()
+        var payloads: [[String: Any]] = []
+
+        for snippet in extractJSONObjectSnippets(in: candidate) {
+            guard let parsed = tryParseJSON(snippet) else { continue }
+
+            if let checkpoints = extractCheckpointList(from: parsed) {
+                for checkpoint in checkpoints {
+                    let fingerprint = checkpointFingerprint(checkpoint)
+                    if seen.insert(fingerprint).inserted {
+                        payloads.append(checkpoint)
+                    }
+                }
+                continue
+            }
+
+            if let checkpoint = parsed as? [String: Any], looksLikeCheckpoint(checkpoint) {
+                let fingerprint = checkpointFingerprint(checkpoint)
+                if seen.insert(fingerprint).inserted {
+                    payloads.append(checkpoint)
+                }
+            }
+        }
+
+        return payloads.enumerated().compactMap { index, item in
+            let title = stringValue(in: item, keys: ["title", "label", "name"])
+                ?? "Checkpoint \(index + 1)"
+            let hint = stringValue(in: item, keys: ["hint", "cue", "reproduction_goal", "common_misconception"])
+            let questions = normalizeQuestions(from: item["questions"])
+
+            guard let hint, !questions.isEmpty else { return nil }
+
+            return StructuralReviewItem(
+                id: UUID(),
+                title: title.trimmingCharacters(in: .whitespacesAndNewlines),
+                hint: hint.trimmingCharacters(in: .whitespacesAndNewlines),
+                questions: questions)
+        }
+    }
+
+    private func extractJSONObjectSnippets(in text: String) -> [String] {
+        let characters = Array(text)
+        var snippets: [String] = []
+        var objectStartIndex: Int?
+        var objectDepth = 0
+        var isInsideString = false
+        var isEscaping = false
+
+        for index in characters.indices {
+            let character = characters[index]
+
+            if isInsideString {
+                if isEscaping {
+                    isEscaping = false
+                } else if character == "\\" {
+                    isEscaping = true
+                } else if character == "\"" {
+                    isInsideString = false
+                }
+                continue
+            }
+
+            if character == "\"" {
+                isInsideString = true
+                continue
+            }
+
+            if character == "{" {
+                if objectDepth == 0 {
+                    objectStartIndex = index
+                }
+                objectDepth += 1
+                continue
+            }
+
+            if character == "}" {
+                guard objectDepth > 0 else { continue }
+                objectDepth -= 1
+                if objectDepth == 0, let startIndex = objectStartIndex {
+                    snippets.append(String(characters[startIndex...index]))
+                    objectStartIndex = nil
+                }
+            }
+        }
+
+        return snippets
+    }
+
+    private func checkpointFingerprint(_ checkpoint: [String: Any]) -> String {
+        let title = stringValue(in: checkpoint, keys: ["title", "label", "name"]) ?? ""
+        let hint = stringValue(in: checkpoint, keys: ["hint", "cue", "reproduction_goal", "common_misconception"]) ?? ""
+        let questions = normalizeQuestions(from: checkpoint["questions"]).joined(separator: "\u{241E}")
+        return [title, hint, questions].joined(separator: "\u{241F}")
+    }
+
+    private func looksLikeCheckpoint(_ object: [String: Any]) -> Bool {
+        let hasTitle = stringValue(in: object, keys: ["title", "label", "name"]) != nil
+        let hasHint = stringValue(in: object, keys: ["hint", "cue", "reproduction_goal", "common_misconception"]) != nil
+        let hasQuestions = !normalizeQuestions(from: object["questions"]).isEmpty
+        return hasQuestions && (hasTitle || hasHint)
     }
 
     private func splitParagraphs(in text: String) -> [String] {
@@ -394,6 +558,29 @@ struct SectionReproducer {
         }
         .prefix(6)
         .map { $0 }
+    }
+}
+
+struct StructuralReviewGeneration {
+    var review: StructuralReview
+    var rawResponse: String
+}
+
+enum StructuralReviewError: LocalizedError {
+    case invalidResponse(message: String, rawResponse: String)
+
+    var errorDescription: String? {
+        switch self {
+        case .invalidResponse(let message, _):
+            return message
+        }
+    }
+
+    var rawResponse: String {
+        switch self {
+        case .invalidResponse(_, let rawResponse):
+            return rawResponse
+        }
     }
 }
 

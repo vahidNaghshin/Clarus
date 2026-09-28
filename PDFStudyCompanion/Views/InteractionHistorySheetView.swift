@@ -87,6 +87,7 @@ private struct InteractionHistoryRow: View {
                         }
                     }
                 }
+                .textSelection(.enabled)
             }
         }
         .padding(.vertical, 6)

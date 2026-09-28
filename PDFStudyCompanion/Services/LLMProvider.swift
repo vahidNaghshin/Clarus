@@ -386,11 +386,11 @@ struct BedrockProvider: LLMProvider {
         let response = try JSONDecoder().decode(BedrockConverseResponse.self, from: data)
         let texts = response.output?.message?.content.compactMap(\.text).filter { !$0.isEmpty } ?? []
 
-        guard let text = texts.first else {
+        guard !texts.isEmpty else {
             throw LLMProviderError.invalidResponse("Bedrock returned a response, but no text content was found.")
         }
 
-        return text
+        return texts.joined(separator: "\n")
     }
 }
 

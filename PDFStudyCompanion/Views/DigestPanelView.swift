@@ -15,9 +15,11 @@ struct DigestPanelView: View {
     @State private var questionsBySection: [UUID: [MultipleChoiceQuestion]] = [:]
     @State private var structuralReviewsBySection: [UUID: [StructuralReviewItem]] = [:]
     @State private var errorsBySection: [UUID: String] = [:]
+    @State private var structuralReviewMonitorsBySection: [UUID: StructuralReviewMonitor] = [:]
     @State private var summarizingSectionIDs: Set<UUID> = []
     @State private var generatingQuestionsSectionIDs: Set<UUID> = []
     @State private var generatingStructuralReviewSectionIDs: Set<UUID> = []
+    @State private var presentedStructuralReviewMonitor: StructuralReviewMonitor?
 
     var body: some View {
         Group {
@@ -41,6 +43,12 @@ struct DigestPanelView: View {
                                 generateQuestions(for: section)
                             }
                             .disabled(isBusy(section) || !hasReadableText(section))
+
+                            if let monitor = structuralReviewMonitorsBySection[section.id] {
+                                Button("Last LLM Response") {
+                                    presentedStructuralReviewMonitor = monitor
+                                }
+                            }
                         }
 
                         if let summaryText = summaryText(for: section) {
@@ -121,6 +129,9 @@ struct DigestPanelView: View {
         }
         .onChange(of: document?.id) { _, _ in
             hydrateFromHistory()
+        }
+        .sheet(item: $presentedStructuralReviewMonitor) { monitor in
+            StructuralReviewMonitorSheet(monitor: monitor)
         }
     }
 
@@ -356,13 +367,34 @@ struct DigestPanelView: View {
             do {
                 let llm = BedrockProvider.configured()
                 let reproducer = section_reproducer(llm: llm)
-                let review = try await reproducer.generateReview(for: section)
+                let generation = try await reproducer.generateReview(for: section)
+                let review = generation.review
+                let monitor = StructuralReviewMonitor(
+                    sectionTitle: section.title,
+                    status: "Parsed successfully",
+                    rawResponse: generation.rawResponse,
+                    errorMessage: nil)
 
                 await MainActor.run {
                     structuralReviewsBySection[section.id] = review.items
+                    structuralReviewMonitorsBySection[section.id] = monitor
+                    presentedStructuralReviewMonitor = monitor
                     if let document {
                         historyStore.addStructuralReview(document: document, section: section, review: review)
                     }
+                    generatingStructuralReviewSectionIDs.remove(section.id)
+                }
+            } catch let error as StructuralReviewError {
+                let monitor = StructuralReviewMonitor(
+                    sectionTitle: section.title,
+                    status: "Response parsing failed",
+                    rawResponse: error.rawResponse,
+                    errorMessage: error.localizedDescription)
+
+                await MainActor.run {
+                    structuralReviewMonitorsBySection[section.id] = monitor
+                    presentedStructuralReviewMonitor = monitor
+                    errorsBySection[section.id] = error.localizedDescription
                     generatingStructuralReviewSectionIDs.remove(section.id)
                 }
             } catch {
@@ -372,6 +404,57 @@ struct DigestPanelView: View {
                 }
             }
         }
+    }
+}
+
+private struct StructuralReviewMonitor: Identifiable {
+    let id = UUID()
+    var sectionTitle: String
+    var status: String
+    var rawResponse: String
+    var errorMessage: String?
+}
+
+private struct StructuralReviewMonitorSheet: View {
+    let monitor: StructuralReviewMonitor
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Structural Review LLM Response")
+                .font(.title3.bold())
+
+            Text(monitor.sectionTitle)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+
+            HStack(alignment: .top, spacing: 12) {
+                Label(monitor.status, systemImage: monitor.errorMessage == nil ? "checkmark.circle" : "exclamationmark.triangle")
+                    .foregroundStyle(monitor.errorMessage == nil ? .green : .orange)
+
+                if let errorMessage = monitor.errorMessage {
+                    Text(errorMessage)
+                        .foregroundStyle(.red)
+                }
+            }
+
+            Text("Raw model response")
+                .font(.headline)
+
+            TextEditor(text: .constant(monitor.rawResponse))
+                .font(.system(.body, design: .monospaced))
+                .frame(minHeight: 360)
+                .border(Color(nsColor: .separatorColor))
+
+            HStack {
+                Spacer()
+                Button("Close") {
+                    dismiss()
+                }
+            }
+        }
+        .padding()
+        .frame(minWidth: 760, idealWidth: 900, minHeight: 560, idealHeight: 680)
     }
 }
 
@@ -396,6 +479,7 @@ private struct StructuralReviewCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.secondary.opacity(0.08))
         .clipShape(RoundedRectangle(cornerRadius: 10))
+        .textSelection(.enabled)
     }
 }
 
