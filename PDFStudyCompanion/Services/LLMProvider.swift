@@ -82,7 +82,9 @@ enum LLMProviderError: LocalizedError {
 struct BedrockProvider: LLMProvider {
     static let defaultProfile = "stormy-api"
     static let defaultRegion = "us-west-2"
-    static let defaultModelID = "qwen.qwen3-235b-a22b-2507-v1:0"
+    static let defaultModelID = "openai.gpt-oss-120b-1:0"
+    // openai.gpt-oss-20b-1:0 for lower-latency or smaller-scale usage
+    // static let defaultModelID = "qwen.qwen3-235b-a22b-2507-v1:0"
     static let defaultVisionModelID = "us.anthropic.claude-sonnet-5"
 
     var region: String

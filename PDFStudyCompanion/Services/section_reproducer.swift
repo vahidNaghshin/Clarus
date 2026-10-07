@@ -48,7 +48,8 @@ struct SectionReproducer {
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         let storyMapJSON = (try? encoder.encode(storyMap)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
         let sourceText = section.rawText
-
+        // JSON might not be the right format as LLM might not interpret it correctly, but it provides a structured representation of the story map. 
+        // Think about other formatting like YAML or plain text outlines that might be easier for the LLM to interpret.
         return """
         SYSTEM PROMPT
         You are section_reproducer, a Socratic learning assistant specializing in
