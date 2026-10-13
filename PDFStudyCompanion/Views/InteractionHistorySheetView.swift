@@ -1,21 +1,47 @@
+import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct InteractionHistorySheetView: View {
     let document: PDFDocument
     @ObservedObject var historyStore: InteractionHistoryStore
     @Environment(\.dismiss) private var dismiss
+    @State private var transferAlertMessage = ""
+    @State private var isTransferAlertPresented = false
 
     var body: some View {
         NavigationStack {
-            Group {
-                if historyStore.records.isEmpty {
-                    ContentUnavailableView(
-                        "No History Yet",
-                        systemImage: "clock.arrow.circlepath",
-                        description: Text("Summaries, structural reviews, chats, and answered questions for this PDF will appear here."))
-                } else {
-                    List(historyStore.records) { record in
-                        InteractionHistoryRow(record: record)
+            VStack(spacing: 0) {
+                HStack(spacing: 10) {
+                    Button {
+                        importHistory()
+                    } label: {
+                        Label("Import", systemImage: "square.and.arrow.down")
+                    }
+
+                    Button {
+                        exportHistory()
+                    } label: {
+                        Label("Export", systemImage: "square.and.arrow.up")
+                    }
+                    .disabled(!hasAnyHistory)
+
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .padding(.bottom, 10)
+
+                Group {
+                    if historyStore.records.isEmpty {
+                        ContentUnavailableView(
+                            "No History Yet",
+                            systemImage: "clock.arrow.circlepath",
+                            description: Text("Summaries, structural reviews, chats, and answered questions for this PDF will appear here."))
+                    } else {
+                        List(historyStore.records) { record in
+                            InteractionHistoryRow(record: record)
+                        }
                     }
                 }
             }
@@ -29,6 +55,60 @@ struct InteractionHistorySheetView: View {
             }
         }
         .frame(minWidth: 520, minHeight: 420)
+        .alert("History Transfer", isPresented: $isTransferAlertPresented) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(transferAlertMessage)
+        }
+    }
+
+    private var hasAnyHistory: Bool {
+        !historyStore.records.isEmpty || !historyStore.notes.isEmpty || !historyStore.highlights.isEmpty
+    }
+
+    private func exportHistory() {
+        let panel = NSSavePanel()
+        panel.title = "Export History"
+        panel.message = "Save this PDF's study history to a portable JSON file."
+        panel.nameFieldStringValue = historyStore.suggestedExportFilename(for: document)
+        panel.canCreateDirectories = true
+        panel.allowedContentTypes = [.json]
+        panel.isExtensionHidden = false
+
+        guard panel.runModal() == .OK, let destinationURL = panel.url else { return }
+
+        do {
+            let data = try historyStore.exportData(for: document)
+            try data.write(to: destinationURL, options: .atomic)
+            presentTransferMessage("Exported history for \(document.title) to \(destinationURL.lastPathComponent).")
+        } catch {
+            presentTransferMessage(error.localizedDescription)
+        }
+    }
+
+    private func importHistory() {
+        let panel = NSOpenPanel()
+        panel.title = "Import History"
+        panel.message = "Choose a history export for the currently open PDF."
+        panel.allowedContentTypes = [.json]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canCreateDirectories = false
+
+        guard panel.runModal() == .OK, let sourceURL = panel.url else { return }
+
+        do {
+            let result = try historyStore.importHistory(from: sourceURL, into: document)
+            presentTransferMessage(
+                "Imported \(result.importedRecordCount) history items, \(result.importedNoteCount) notes, and \(result.importedHighlightCount) highlights into \(document.title).")
+        } catch {
+            presentTransferMessage(error.localizedDescription)
+        }
+    }
+
+    private func presentTransferMessage(_ message: String) {
+        transferAlertMessage = message
+        isTransferAlertPresented = true
     }
 }
 

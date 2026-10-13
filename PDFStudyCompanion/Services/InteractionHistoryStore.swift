@@ -1,4 +1,5 @@
 import Combine
+import CryptoKit
 import Foundation
 
 @MainActor
@@ -11,10 +12,55 @@ final class InteractionHistoryStore: ObservableObject {
     private let rootDirectoryURL: URL
     private var currentDocumentKey: String?
 
+    struct ImportResult {
+        let importedRecordCount: Int
+        let importedNoteCount: Int
+        let importedHighlightCount: Int
+    }
+
+    enum TransferError: LocalizedError {
+        case invalidExportFormat
+        case documentMismatch
+        case unableToReadDocumentData
+
+        var errorDescription: String? {
+            switch self {
+            case .invalidExportFormat:
+                return "The selected file is not a valid PDF Study Companion history export."
+            case .documentMismatch:
+                return "This history export belongs to a different PDF. Open the matching PDF and try again."
+            case .unableToReadDocumentData:
+                return "The current PDF could not be read well enough to verify the import."
+            }
+        }
+    }
+
     private struct InteractionHistoryPayload: Codable {
         var records: [InteractionRecord]
         var notes: [Note]
         var highlights: [PersistedHighlight]
+    }
+
+    private struct ExportedHistoryPackage: Codable {
+        var version: Int
+        var exportedAt: Date
+        var sourceDocument: ExportedDocument
+        var sections: [ExportedSection]
+        var payload: InteractionHistoryPayload
+    }
+
+    private struct ExportedDocument: Codable {
+        var title: String
+        var pageCount: Int
+        var chapterCount: Int
+        var sectionCount: Int
+        var sha256: String
+    }
+
+    private struct ExportedSection: Codable {
+        var id: UUID
+        var title: String
+        var pageRange: ClosedRange<Int>
     }
 
     init(fileManager: FileManager = .default) {
@@ -46,6 +92,70 @@ final class InteractionHistoryStore: ObservableObject {
         records = payload.records.sorted { $0.createdAt > $1.createdAt }
         notes = payload.notes.sorted { $0.createdAt > $1.createdAt }
         highlights = payload.highlights.sorted { $0.createdAt > $1.createdAt }
+    }
+
+    func suggestedExportFilename(for document: PDFDocument) -> String {
+        let baseName = document.title.isEmpty ? "PDFHistory" : document.title
+        let sanitized = baseName.replacingOccurrences(of: "/", with: "-")
+        return "\(sanitized)-history.json"
+    }
+
+    func exportData(for document: PDFDocument) throws -> Data {
+        let documentKey = documentKey(for: document)
+        let payload = loadPayload(for: documentKey)
+        let sections = document.chapters.flatMap(\.sections)
+        let package = ExportedHistoryPackage(
+            version: 1,
+            exportedAt: Date(),
+            sourceDocument: ExportedDocument(
+                title: document.title,
+                pageCount: document.pageCount,
+                chapterCount: document.chapters.count,
+                sectionCount: sections.count,
+                sha256: try documentSHA256(for: document)),
+            sections: sections.map {
+                ExportedSection(id: $0.id, title: $0.title, pageRange: $0.pageRange)
+            },
+            payload: payload)
+
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        return try encoder.encode(package)
+    }
+
+    func importHistory(from fileURL: URL, into document: PDFDocument) throws -> ImportResult {
+        let data = try Data(contentsOf: fileURL)
+        return try importHistory(from: data, into: document)
+    }
+
+    func importHistory(from data: Data, into document: PDFDocument) throws -> ImportResult {
+        let decoder = JSONDecoder()
+        guard let package = try? decoder.decode(ExportedHistoryPackage.self, from: data) else {
+            throw TransferError.invalidExportFormat
+        }
+
+        try validate(package.sourceDocument, matches: document)
+
+        let currentDocumentKey = documentKey(for: document)
+        let sectionRemap = makeSectionRemap(exportedSections: package.sections, document: document)
+        let reboundPayload = rebind(package.payload, to: document, documentKey: currentDocumentKey, sectionRemap: sectionRemap)
+
+        var existingPayload = loadPayload(for: currentDocumentKey)
+        existingPayload.records = mergeUnique(existingPayload.records, reboundPayload.records, id: \.id)
+        existingPayload.notes = mergeUnique(existingPayload.notes, reboundPayload.notes, id: \.id)
+        existingPayload.highlights = mergeUnique(existingPayload.highlights, reboundPayload.highlights, id: \.id)
+        save(existingPayload, for: currentDocumentKey)
+
+        if self.currentDocumentKey == currentDocumentKey {
+            records = existingPayload.records.sorted { $0.createdAt > $1.createdAt }
+            notes = existingPayload.notes.sorted { $0.createdAt > $1.createdAt }
+            highlights = existingPayload.highlights.sorted { $0.createdAt > $1.createdAt }
+        }
+
+        return ImportResult(
+            importedRecordCount: reboundPayload.records.count,
+            importedNoteCount: reboundPayload.notes.count,
+            importedHighlightCount: reboundPayload.highlights.count)
     }
 
     func addSummary(document: PDFDocument, section: Section, summary: Summary) {
@@ -273,6 +383,147 @@ final class InteractionHistoryStore: ObservableObject {
         let fileURL = storageFileURL(for: documentKey)
         guard let data = try? JSONEncoder().encode(payload) else { return }
         try? data.write(to: fileURL, options: .atomic)
+    }
+
+    private func validate(_ exportedDocument: ExportedDocument, matches document: PDFDocument) throws {
+        let documentHash = try documentSHA256(for: document)
+        guard documentHash == exportedDocument.sha256 else {
+            throw TransferError.documentMismatch
+        }
+
+        let currentSectionCount = document.chapters.flatMap(\.sections).count
+        guard document.pageCount == exportedDocument.pageCount,
+              document.chapters.count == exportedDocument.chapterCount,
+              currentSectionCount == exportedDocument.sectionCount else {
+            throw TransferError.documentMismatch
+        }
+    }
+
+    private func documentSHA256(for document: PDFDocument) throws -> String {
+        guard let data = try? Data(contentsOf: document.fileURL) else {
+            throw TransferError.unableToReadDocumentData
+        }
+
+        let digest = SHA256.hash(data: data)
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    private func makeSectionRemap(exportedSections: [ExportedSection], document: PDFDocument) -> [UUID: UUID] {
+        let currentSections = document.chapters.flatMap(\.sections)
+        var remap: [UUID: UUID] = [:]
+
+        for exportedSection in exportedSections {
+            if let exactMatch = currentSections.first(where: {
+                $0.title == exportedSection.title && $0.pageRange == exportedSection.pageRange
+            }) {
+                remap[exportedSection.id] = exactMatch.id
+                continue
+            }
+
+            let titleMatches = currentSections.filter { $0.title == exportedSection.title }
+            if titleMatches.count == 1, let onlyMatch = titleMatches.first {
+                remap[exportedSection.id] = onlyMatch.id
+                continue
+            }
+
+            if let pageMatch = currentSections.first(where: {
+                $0.pageRange.lowerBound == exportedSection.pageRange.lowerBound
+            }) {
+                remap[exportedSection.id] = pageMatch.id
+            }
+        }
+
+        return remap
+    }
+
+    private func rebind(
+        _ payload: InteractionHistoryPayload,
+        to document: PDFDocument,
+        documentKey: String,
+        sectionRemap: [UUID: UUID]
+    ) -> InteractionHistoryPayload {
+        let reboundRecords = payload.records.map { record in
+            var rebound = record
+            rebound.documentKey = documentKey
+            if let sectionID = record.sectionID {
+                rebound.sectionID = sectionRemap[sectionID] ?? resolveSectionID(
+                    title: record.sectionTitle,
+                    pageIndex: nil,
+                    document: document)
+            }
+            return rebound
+        }
+
+        let reboundNotes = payload.notes.map { note in
+            var rebound = note
+            rebound.documentID = document.id
+            if let sectionID = note.sectionID {
+                rebound.sectionID = sectionRemap[sectionID] ?? resolveSectionID(
+                    title: note.sectionTitle,
+                    pageIndex: note.pageIndex,
+                    document: document)
+            }
+            return rebound
+        }
+
+        let reboundHighlights = payload.highlights.map { highlight in
+            var rebound = highlight
+            rebound.documentID = document.id
+            let pageIndex = highlight.segments.first?.pageIndex
+            if let sectionID = highlight.sectionID {
+                rebound.sectionID = sectionRemap[sectionID] ?? resolveSectionID(
+                    title: highlight.sectionTitle,
+                    pageIndex: pageIndex,
+                    document: document)
+            }
+            return rebound
+        }
+
+        return InteractionHistoryPayload(
+            records: reboundRecords,
+            notes: reboundNotes,
+            highlights: reboundHighlights)
+    }
+
+    private func resolveSectionID(title: String?, pageIndex: Int?, document: PDFDocument) -> UUID? {
+        let sections = document.chapters.flatMap(\.sections)
+
+        if let title,
+           let pageIndex,
+           let exactMatch = sections.first(where: {
+               $0.title == title && $0.pageRange.contains(pageIndex)
+           }) {
+            return exactMatch.id
+        }
+
+        if let title {
+            let titleMatches = sections.filter { $0.title == title }
+            if titleMatches.count == 1 {
+                return titleMatches.first?.id
+            }
+        }
+
+        if let pageIndex {
+            return sections.first(where: { $0.pageRange.contains(pageIndex) })?.id
+        }
+
+        return nil
+    }
+
+    private func mergeUnique<Value: Identifiable>(
+        _ existing: [Value],
+        _ imported: [Value],
+        id: KeyPath<Value, Value.ID>
+    ) -> [Value] where Value.ID: Hashable {
+        var merged = existing
+        var seen = Set(existing.map { $0[keyPath: id] })
+
+        for value in imported where !seen.contains(value[keyPath: id]) {
+            merged.append(value)
+            seen.insert(value[keyPath: id])
+        }
+
+        return merged
     }
 
     private func documentKey(for document: PDFDocument) -> String {
